@@ -58,6 +58,79 @@ jobs:
         with:
           version: 2.34.0
 
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Authenticate gcloud
+        run: |
+          set -euo pipefail
+
+          op item get ops \
+            --vault Tamber-Production \
+            --format json \
+            --reveal > "${RUNNER_TEMP}/op-ops.json"
+
+          OP_ITEM_JSON="${RUNNER_TEMP}/op-ops.json" \
+          GOOGLE_APPLICATION_CREDENTIALS="${RUNNER_TEMP}/gcloud-service-account.json" \
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const item = JSON.parse(fs.readFileSync(process.env.OP_ITEM_JSON, 'utf8'));
+          const fields = Array.isArray(item.fields) ? item.fields : [];
+
+          function normalize(value) {
+            return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+          }
+
+          function parseCredentials(value) {
+            const raw = String(value ?? '').trim();
+            if (!raw) return undefined;
+
+            for (const candidate of [
+              raw,
+              Buffer.from(raw, 'base64').toString('utf8'),
+            ]) {
+              try {
+                const json = JSON.parse(candidate);
+                if (json.type === 'service_account'
+                    && json.client_email
+                    && json.private_key) {
+                  return JSON.stringify(json, null, 2);
+                }
+              } catch {
+                // Keep trying candidate encodings.
+              }
+            }
+
+            return undefined;
+          }
+
+          const preferred = fields.filter((field) => {
+            const label = normalize(field.label);
+            return label.includes('gcloud')
+              || label.includes('googlecloud')
+              || label.includes('gcp')
+              || label.includes('serviceaccount')
+              || label.includes('credentials');
+          });
+
+          for (const field of [...preferred, ...fields]) {
+            const credentials = parseCredentials(field.value);
+            if (credentials) {
+              fs.writeFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, credentials, {
+                mode: 0o600,
+              });
+              process.exit(0);
+            }
+          }
+
+          throw new Error('No Google Cloud service account JSON found in op://Tamber-Production/ops');
+          NODE
+
+          gcloud auth activate-service-account \
+            --key-file="${RUNNER_TEMP}/gcloud-service-account.json"
+          gcloud auth list --filter=status:ACTIVE --format='value(account)'
+          gcloud storage ls gs://tamber-artifacts >/dev/null
+
       - name: Capture existing hub artifact hash
         if: inputs.include_hub != 'true' && inputs.publish_hub_update != 'true'
         run: |
