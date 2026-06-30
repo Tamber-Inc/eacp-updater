@@ -46,7 +46,6 @@ const productId = 'com.tamber.AppHub';
 const channelPath = safeChannelPath(channel);
 const installerManifestName = 'hub-installer.json';
 const appHubPkgObject = `channels/${channelPath}/artifacts/${appHubPkg}`;
-const installerManifestObject = `channels/${channelPath}/${installerManifestName}`;
 
 requireMacOS('Remote AppHub update publishing');
 
@@ -164,13 +163,12 @@ run('gcloud', [
   `${storageRoot}/${appHubPkgObject}`,
   '--cache-control=no-cache,max-age=0',
 ]);
-run('gcloud', [
-  'storage',
-  'cp',
-  join(outDir, installerManifestName),
-  `${storageRoot}/${installerManifestObject}`,
-  '--content-type=application/json',
-  '--cache-control=no-cache,max-age=0',
+
+log(`Update ${channel} AppHub channel metadata`);
+run(process.execPath, [
+  'Scripts/update-apphub-channel.mjs',
+  channel,
+  version,
 ]);
 
 log(`Published AppHub ${version}`);
