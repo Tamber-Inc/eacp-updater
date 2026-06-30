@@ -3,9 +3,9 @@ set(EACP_APPHUB_VERSION
     CACHE STRING
     "Version baked into the AppHub bundle")
 
-set(EACP_APPHUB_BUNDLE_ID "com.tamber.AppHub" CACHE STRING "AppHub bundle identifier")
+set(EACP_APPHUB_BUNDLE_ID "music.tamber.AppHub" CACHE STRING "AppHub bundle identifier")
 set(EACP_APPHUB_HELPER_LABEL
-    "com.tamber.AppHub.PrivilegedHelper"
+    "music.tamber.AppHub.PrivilegedHelper"
     CACHE STRING
     "AppHub privileged helper launchd label")
 set(EACP_APPHUB_ALLOWED_TEAM_ID

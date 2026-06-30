@@ -35,7 +35,7 @@ const macOSDeploymentTarget = env('EACP_MACOS_DEPLOYMENT_TARGET', '11.0');
 const demoAppName = 'Tamber Local Update Demo.app';
 const demoBinaryName = 'Tamber Local Update Demo';
 const demoZip = `TamberLocalUpdateDemo-${version}.app.zip`;
-const productId = 'com.tamber.RealUpdateDemo';
+const productId = 'music.tamber.RealUpdateDemo';
 
 requireMacOS('Remote demo app update publishing');
 

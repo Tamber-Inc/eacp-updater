@@ -4,7 +4,7 @@ set(EACP_REAL_UPDATE_DEMO_VERSION
     "Version baked into the real local HTTP update demo app")
 
 set(EACP_REAL_UPDATE_DEMO_BUNDLE_ID
-    "com.tamber.RealUpdateDemo"
+    "music.tamber.RealUpdateDemo"
     CACHE STRING
     "Bundle identifier for the real local HTTP update demo app")
 

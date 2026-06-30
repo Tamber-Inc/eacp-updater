@@ -42,7 +42,7 @@ const appHubAppName = 'AppHub.app';
 const appHubBinaryName = 'AppHub';
 const appHubZip = `AppHub-${version}.app.zip`;
 const appHubPkg = `AppHub-${version}.pkg`;
-const productId = 'com.tamber.AppHub';
+const productId = 'music.tamber.AppHub';
 const channelPath = safeChannelPath(channel);
 const installerManifestName = 'hub-installer.json';
 const appHubPkgObject = `channels/${channelPath}/artifacts/${appHubPkg}`;
@@ -75,7 +75,7 @@ const appHubHelper = join(
   'Contents',
   'Library',
   'LaunchServices',
-  'com.tamber.AppHub.PrivilegedHelper',
+  'music.tamber.AppHub.PrivilegedHelper',
 );
 
 log(`Sign AppHub ${version}`);

@@ -274,7 +274,7 @@ export function verifyPkgSignature(path) {
 
 export function verifyAppHubPrivilegedHelper(
   appBundle,
-  helperLabel = 'com.tamber.AppHub.PrivilegedHelper',
+  helperLabel = 'music.tamber.AppHub.PrivilegedHelper',
 ) {
   verifyCodeSignature(join(
     appBundle,
@@ -302,7 +302,7 @@ export function verifyMachODeploymentTargetAtMost(path, maximumVersion) {
 export function verifyAppHubDeploymentTarget(
   appBundle,
   maximumVersion,
-  helperLabel = 'com.tamber.AppHub.PrivilegedHelper',
+  helperLabel = 'music.tamber.AppHub.PrivilegedHelper',
 ) {
   verifyMachODeploymentTargetAtMost(
     join(appBundle, 'Contents', 'MacOS', 'AppHub'),

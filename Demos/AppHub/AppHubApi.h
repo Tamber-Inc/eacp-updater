@@ -1219,14 +1219,14 @@ private:
             return fail(installResult.error);
         }
 
-        if (manifest->productId == "com.tamber.AppHub")
+        if (manifest->productId == "music.tamber.AppHub")
             updateHubStatus();
         else
             refreshState("Installed " + manifest->name + " " + manifest->version,
                          true);
         finishOperation(true, "Installed " + manifest->name + " "
                                   + manifest->version);
-        if (manifest->productId == "com.tamber.AppHub")
+        if (manifest->productId == "music.tamber.AppHub")
             relaunchInstalledHub();
         return ok("Installed " + manifest->name + " " + manifest->version);
     }
@@ -1236,7 +1236,7 @@ private:
         beginOperation(HubOperationKind::Launching,
                        "Relaunching AppHub",
                        AppHub::installedHubAppBundlePath().string(),
-                       "com.tamber.AppHub");
+                       "music.tamber.AppHub");
         auto launched = AppHub::openNewAppBundleInstance(
             AppHub::installedHubAppBundlePath().string());
         if (!launched.ok)

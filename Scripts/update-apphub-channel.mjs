@@ -55,7 +55,7 @@ writeJson(catalogPath, {
 writeJson(indexPath, channelIndex());
 
 writeJson(installerManifestPath, {
-  productId: 'com.tamber.AppHub',
+  productId: 'music.tamber.AppHub',
   name: 'AppHub',
   version,
   bundleName: 'AppHub.app',
