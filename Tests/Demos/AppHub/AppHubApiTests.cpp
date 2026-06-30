@@ -440,6 +440,47 @@ auto tLaunchGuardClientFailsOpenOnTransportError =
     check(result.message == "agent unavailable");
 };
 
+auto tLaunchGuardContextBuildsMiroRequest =
+    test("AppHub/launchGuardContextBuildsMiroRequest") = []
+{
+    auto request = LaunchGuard::launchCheckRequestFor(
+        {.productId = "com.eacp.maze",
+         .version = "1.2.3",
+         .channel = "beta",
+         .bundlePath = "/Applications/Maze.app",
+         .openHubOnBlock = false});
+
+    check(request.productId == "com.eacp.maze");
+    check(request.version == "1.2.3");
+    check(request.channel == "beta");
+    check(request.bundlePath == "/Applications/Maze.app");
+    check(!request.openHubOnBlock);
+};
+
+auto tLaunchGuardAbortPolicyLivesInLibrary =
+    test("AppHub/launchGuardAbortPolicyLivesInLibrary") = []
+{
+    auto result = LaunchGuard::LaunchCheckResult();
+
+    result.decision = LaunchGuard::LaunchDecision::Allow;
+    check(!LaunchGuard::shouldAbortLaunch(result));
+
+    result.decision = LaunchGuard::LaunchDecision::UpdateAvailable;
+    check(!LaunchGuard::shouldAbortLaunch(result));
+
+    result.decision = LaunchGuard::LaunchDecision::UnknownAllow;
+    check(!LaunchGuard::shouldAbortLaunch(result));
+
+    result.decision = LaunchGuard::LaunchDecision::UpdateRequired;
+    check(LaunchGuard::shouldAbortLaunch(result));
+
+    result.decision = LaunchGuard::LaunchDecision::HubRequired;
+    check(LaunchGuard::shouldAbortLaunch(result));
+
+    result.decision = LaunchGuard::LaunchDecision::UnknownBlock;
+    check(LaunchGuard::shouldAbortLaunch(result));
+};
+
 auto tLaunchGuardFramesRoundTripAndSupportPartialReads =
     test("AppHub/launchGuardFramesRoundTripAndSupportPartialReads") = []
 {
@@ -472,6 +513,71 @@ auto tLaunchGuardFrameRejectsOversizedPayload =
     auto decoded = LaunchGuard::decodeLaunchGuardFrame(frame);
     check(decoded.status == LaunchGuard::LaunchGuardFrameStatus::Invalid);
     check(decoded.error == "launch guard payload is too large");
+};
+
+auto tCheckLaunchRequiresUpdateBelowMinimumVersion =
+    test("AppHub/checkLaunchRequiresUpdateBelowMinimumVersion") = []
+{
+    auto root = testRoot("launch-policy-required-update");
+    auto product = makeAppProduct();
+    product.latestVersion = "2.0.0";
+    product.minimumLaunchVersion = "2.0.0";
+
+    auto catalog = Updater::ProductCatalog();
+    catalog.catalogVersion = 2;
+    catalog.signature = "test";
+    catalog.products.add(product);
+    writeCatalogAt(root / "catalog.json", catalog);
+    writeReceipt(root, (root / "Installed" / "Maze.app").string());
+
+    auto api = Api::AppHubApi(root);
+    auto result = api.checkLaunch({.productId = "com.eacp.maze",
+                                   .version = "1.0.0",
+                                   .channel = "stable"});
+
+    check(result.decision == LaunchGuard::LaunchDecision::UpdateRequired);
+    check(result.installedVersion == "1.0.0");
+    check(result.latestVersion == "2.0.0");
+    check(result.minimumLaunchVersion == "2.0.0");
+};
+
+auto tCheckLaunchAllowsSoftUpdate =
+    test("AppHub/checkLaunchAllowsSoftUpdate") = []
+{
+    auto root = testRoot("launch-policy-soft-update");
+    auto product = makeAppProduct();
+    product.latestVersion = "2.0.0";
+
+    auto catalog = Updater::ProductCatalog();
+    catalog.catalogVersion = 2;
+    catalog.signature = "test";
+    catalog.products.add(product);
+    writeCatalogAt(root / "catalog.json", catalog);
+    writeReceipt(root, (root / "Installed" / "Maze.app").string());
+
+    auto api = Api::AppHubApi(root);
+    auto result = api.checkLaunch({.productId = "com.eacp.maze",
+                                   .version = "1.0.0",
+                                   .channel = "stable"});
+
+    check(result.decision == LaunchGuard::LaunchDecision::UpdateAvailable);
+    check(result.message == "Update available");
+};
+
+auto tCheckLaunchAllowsCurrentVersion =
+    test("AppHub/checkLaunchAllowsCurrentVersion") = []
+{
+    auto root = testRoot("launch-policy-current");
+    writeCatalog(root);
+    writeReceipt(root, (root / "Installed" / "Maze.app").string());
+
+    auto api = Api::AppHubApi(root);
+    auto result = api.checkLaunch({.productId = "com.eacp.maze",
+                                   .version = "1.0.0",
+                                   .channel = "stable"});
+
+    check(result.decision == LaunchGuard::LaunchDecision::Allow);
+    check(result.message == "Launch allowed");
 };
 
 auto tOpenProductMarksRunningOnlyAfterLaunchSucceeds =

@@ -1,82 +1,57 @@
+#include <eacp/AppHub/LaunchGuardIpc.h>
 #include <eacp/Graphics/Graphics.h>
-#include <eacp/Network/HTTP/Http.h>
-#include <eacp/Updater/Updater.h>
-
-#include <Miro/Miro.h>
 
 #include <iostream>
 #include <string>
+#include <string_view>
 
 #ifndef EACP_REAL_UPDATE_DEMO_VERSION
 #define EACP_REAL_UPDATE_DEMO_VERSION "0.0.0"
 #endif
 
-#ifndef EACP_REAL_UPDATE_DEMO_MANIFEST_URL
-#define EACP_REAL_UPDATE_DEMO_MANIFEST_URL \
-    "https://github.com/Tamber-Inc/eacp-updater/releases/download/remote-demo-v1/manifest.json"
+#ifndef EACP_REAL_UPDATE_DEMO_PRODUCT_ID
+#define EACP_REAL_UPDATE_DEMO_PRODUCT_ID "music.tamber.RealUpdateDemo"
 #endif
 
+namespace AppHub = eacp::AppHub;
 namespace Graphics = eacp::Graphics;
-namespace HTTP = eacp::HTTP;
-namespace Updater = eacp::Updater;
 
 namespace
 {
-constexpr std::string_view defaultManifestUrl =
-    EACP_REAL_UPDATE_DEMO_MANIFEST_URL;
+constexpr std::string_view productId = EACP_REAL_UPDATE_DEMO_PRODUCT_ID;
 
-std::string downloadText(std::string_view url)
+AppHub::LaunchGuardContext launchGuardContext()
 {
-    auto response = HTTP::Request(std::string(url)).perform();
-    if (response.statusCode < 200 || response.statusCode >= 300)
-        return {};
-
-    return response.content;
+    return {.productId = std::string(productId),
+            .version = EACP_REAL_UPDATE_DEMO_VERSION,
+            .channel = "stable"};
 }
 
-std::string updateStatusText()
+std::string launchMessage(const AppHub::LaunchCheckResult& result)
 {
-    auto manifestText = downloadText(defaultManifestUrl);
-    if (manifestText.empty())
-        return "Update check failed";
+    return "Launch guard: " + AppHub::launchGuardMessage(result);
+}
 
-    auto manifest = Updater::RemoteAppManifest();
-    try
-    {
-        Miro::fromJSONString(manifest, manifestText);
-    }
-    catch (...)
-    {
-        return "Update manifest is invalid";
-    }
-
-    if (Updater::isNewerVersion(manifest.version, EACP_REAL_UPDATE_DEMO_VERSION))
-        return "Update available: " + manifest.version;
-
-    return "Up to date: " + std::string(EACP_REAL_UPDATE_DEMO_VERSION);
+std::string& launchStatusText()
+{
+    static auto status = std::string("Launch guard: unchecked");
+    return status;
 }
 
 struct DemoView final : Graphics::View
 {
-    DemoView()
+    explicit DemoView(std::string launchStatus)
     {
         background->setFillColor({0.08f, 0.09f, 0.10f});
         title->setColor({0.94f, 0.96f, 0.96f});
-        version->setColor({0.64f, 0.72f, 0.74f});
-        status->setColor({0.53f, 0.82f, 0.76f});
-        manifest->setColor({0.45f, 0.49f, 0.52f});
+        subtitle->setColor({0.60f, 0.74f, 0.78f});
+        guard->setColor({0.46f, 0.78f, 0.62f});
 
-        version->setText("Installed version: " EACP_REAL_UPDATE_DEMO_VERSION);
-        status->setText("Choose App > Check for Updates");
-        manifest->setText(std::string("Feed: ") + std::string(defaultManifestUrl));
+        title->setText("hello world " EACP_REAL_UPDATE_DEMO_VERSION);
+        subtitle->setText(std::string("product: ") + std::string(productId));
+        guard->setText(std::move(launchStatus));
 
-        addChildren({background, title, version, status, manifest});
-    }
-
-    void setStatus(const std::string& text)
-    {
-        status->setText(text);
-        repaint();
+        addChildren({background, title, subtitle, guard});
     }
 
     void resized() override
@@ -87,36 +62,27 @@ struct DemoView final : Graphics::View
         path.addRect(bounds);
         background->setPath(path);
 
-        scaleToFit({background, title, version, status, manifest});
-        title->setPosition({28.f, bounds.h - 54.f});
-        version->setPosition({28.f, bounds.h - 92.f});
-        status->setPosition({28.f, bounds.h - 132.f});
-        manifest->setPosition({28.f, 32.f});
+        scaleToFit({background, title, subtitle, guard});
+        title->setPosition({28.f, bounds.h - 72.f});
+        subtitle->setPosition({28.f, bounds.h - 112.f});
+        guard->setPosition({28.f, 34.f});
     }
 
     Graphics::ShapeLayerView background;
-    Graphics::TextLayerView title {"Tamber Demo App"};
-    Graphics::TextLayerView version;
-    Graphics::TextLayerView status;
-    Graphics::TextLayerView manifest;
+    Graphics::TextLayerView title;
+    Graphics::TextLayerView subtitle;
+    Graphics::TextLayerView guard;
 };
 
 struct DemoGuiApp
 {
     DemoGuiApp()
+        : view(launchStatusText())
     {
         window.setContentView(view);
         window.toFront();
 
         auto appMenu = Graphics::Menu("App");
-        appMenu.add(Graphics::MenuItem::withAction(
-            "Check for Updates",
-            [this]
-            {
-                view.setStatus("Checking...");
-                view.setStatus(updateStatusText());
-            }));
-        appMenu.addSeparator();
         appMenu.add(Graphics::MenuItem::withAction("Quit", [] { eacp::Apps::quit(); }));
 
         auto bar = Graphics::MenuBar();
@@ -127,11 +93,11 @@ struct DemoGuiApp
     static Graphics::WindowOptions windowOptions()
     {
         auto options = Graphics::WindowOptions();
-        options.title = "Tamber Demo App";
-        options.width = 520;
-        options.height = 260;
-        options.minWidth = 420;
-        options.minHeight = 220;
+        options.title = "Hello World Demo";
+        options.width = 480;
+        options.height = 220;
+        options.minWidth = 360;
+        options.minHeight = 180;
         return options;
     }
 
@@ -148,11 +114,21 @@ int main(int argc, char* argv[])
         return 0;
     }
 
-    if (argc > 1 && std::string(argv[1]) == "--check-updates")
+    if (argc > 1 && std::string(argv[1]) == "--launch-check")
     {
-        std::cout << updateStatusText() << "\n";
+        std::cout << AppHub::launchCheckResultToString(
+                         AppHub::checkLaunch(launchGuardContext()))
+                  << "\n";
         return 0;
     }
+
+    auto launchPolicy = AppHub::checkLaunch(launchGuardContext());
+    if (AppHub::shouldAbortLaunch(launchPolicy))
+    {
+        std::cout << launchMessage(launchPolicy) << "\n";
+        return 1;
+    }
+    launchStatusText() = launchMessage(launchPolicy);
 
     eacp::Apps::run<DemoGuiApp>(argc, argv);
     return 0;

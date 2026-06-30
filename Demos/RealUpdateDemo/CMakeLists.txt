@@ -15,12 +15,13 @@ set(EACP_REAL_UPDATE_DEMO_MANIFEST_URL
 
 add_executable(RealUpdateDemo MACOSX_BUNDLE Main.cpp)
 set_default_target_setting(RealUpdateDemo)
-target_link_libraries(RealUpdateDemo PRIVATE eacp-graphics eacp-network eacp-updater)
+target_link_libraries(RealUpdateDemo PRIVATE eacp-apphub eacp-graphics eacp-updater)
 eacp_set_gui_subsystem(RealUpdateDemo)
 
 target_compile_definitions(RealUpdateDemo
     PRIVATE
         EACP_REAL_UPDATE_DEMO_VERSION="${EACP_REAL_UPDATE_DEMO_VERSION}"
+        EACP_REAL_UPDATE_DEMO_PRODUCT_ID="${EACP_REAL_UPDATE_DEMO_BUNDLE_ID}"
         EACP_REAL_UPDATE_DEMO_MANIFEST_URL="${EACP_REAL_UPDATE_DEMO_MANIFEST_URL}")
 
 if (APPLE)

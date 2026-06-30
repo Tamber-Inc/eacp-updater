@@ -44,6 +44,16 @@ struct LaunchGuardDecodedFrame
 using LaunchGuardCheckHandler =
     std::function<LaunchCheckResult(const LaunchCheckRequest&)>;
 
+struct LaunchGuardContext
+{
+    std::string productId;
+    std::string version;
+    std::string channel = "stable";
+    std::string bundlePath;
+    std::string endpointName;
+    bool openHubOnBlock = true;
+};
+
 std::string launchCheckRequestToString(const LaunchCheckRequest& request);
 std::string launchCheckResultToString(const LaunchCheckResult& result);
 LaunchCheckRequest launchCheckRequestFromString(std::string_view payload);
@@ -56,6 +66,10 @@ std::string handleLaunchGuardIpcRequest(std::string_view payload,
                                         const LaunchGuardCheckHandler& handler);
 LaunchCheckResult checkLaunchOverIpc(LaunchGuardIpcTransport& transport,
                                      const LaunchCheckRequest& request);
+LaunchCheckRequest launchCheckRequestFor(const LaunchGuardContext& context);
+LaunchCheckResult checkLaunch(const LaunchGuardContext& context);
+bool shouldAbortLaunch(const LaunchCheckResult& result);
+std::string launchGuardMessage(const LaunchCheckResult& result);
 
 std::string defaultLaunchGuardEndpointName();
 LaunchGuardIpcExchange sendLaunchGuardIpcRequest(std::string_view endpointName,

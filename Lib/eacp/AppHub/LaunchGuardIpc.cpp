@@ -141,6 +141,64 @@ LaunchCheckResult checkLaunchOverIpc(LaunchGuardIpcTransport& transport,
     }
 }
 
+LaunchCheckRequest launchCheckRequestFor(const LaunchGuardContext& context)
+{
+    auto request = LaunchCheckRequest();
+    request.productId = context.productId;
+    request.version = context.version;
+    request.channel = context.channel;
+    request.bundlePath = context.bundlePath;
+    request.openHubOnBlock = context.openHubOnBlock;
+    return request;
+}
+
+LaunchCheckResult checkLaunch(const LaunchGuardContext& context)
+{
+    auto request = launchCheckRequestFor(context);
+    auto response = sendLaunchGuardIpcRequest(
+        context.endpointName.empty() ? defaultLaunchGuardEndpointName()
+                                     : context.endpointName,
+        launchCheckRequestToString(request));
+    if (!response.ok)
+    {
+        auto result = LaunchCheckResult();
+        result.decision = LaunchDecision::UnknownAllow;
+        result.productId = request.productId;
+        result.installedVersion = request.version;
+        result.message = response.error.empty() ? "Launch guard unavailable"
+                                                : response.error;
+        return result;
+    }
+
+    try
+    {
+        return launchCheckResultFromString(response.payload);
+    }
+    catch (...)
+    {
+        auto result = LaunchCheckResult();
+        result.decision = LaunchDecision::UnknownAllow;
+        result.productId = request.productId;
+        result.installedVersion = request.version;
+        result.message = "Launch guard returned an invalid response";
+        return result;
+    }
+}
+
+bool shouldAbortLaunch(const LaunchCheckResult& result)
+{
+    return result.decision == LaunchDecision::UpdateRequired
+        || result.decision == LaunchDecision::HubRequired
+        || result.decision == LaunchDecision::UnknownBlock;
+}
+
+std::string launchGuardMessage(const LaunchCheckResult& result)
+{
+    if (result.message.empty())
+        return shouldAbortLaunch(result) ? "Launch blocked" : "Launch allowed";
+    return result.message;
+}
+
 std::string defaultLaunchGuardEndpointName()
 {
     return "TamberAppHubLaunchGuard";

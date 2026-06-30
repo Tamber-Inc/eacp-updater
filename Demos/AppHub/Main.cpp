@@ -1,6 +1,7 @@
 #include "App.h"
 #include "PrivilegedHelperClient.h"
 
+#include <eacp/AppHub/LaunchGuardIpc.h>
 #include <eacp/AppHub/AppHubPlatform.h>
 #include <eacp/Updater/Updater.h>
 
@@ -391,6 +392,7 @@ void printUsage()
         << "  AppHub [--root <path>] reset\n"
         << "  AppHub [--root <path>] list\n"
         << "  AppHub [--root <path>] status\n"
+        << "  AppHub [--root <path>] launch-check <miro-json>\n"
         << "  AppHub [--root <path>] install <product-id>\n"
         << "  AppHub [--root <path>] catalog-install <product-id>\n"
         << "  AppHub [--root <path>] catalog-update <product-id>\n"
@@ -1090,6 +1092,30 @@ int main(int argc, char* argv[])
         return showList(options.root);
     if (command == "status")
         return showReceipts(options.root);
+    if (command == "launch-check")
+    {
+        if (options.productId.empty())
+        {
+            std::cout << "launch-check requires a Miro JSON request\n";
+            return 2;
+        }
+
+        try
+        {
+            auto request = eacp::AppHub::launchCheckRequestFromString(
+                options.productId);
+            auto api = Api::AppHubApi(options.root);
+            std::cout << eacp::AppHub::launchCheckResultToString(
+                             api.checkLaunch(request))
+                      << "\n";
+            return 0;
+        }
+        catch (...)
+        {
+            std::cout << "launch-check request is invalid\n";
+            return 2;
+        }
+    }
     if (command == "install")
     {
         if (options.productId.empty())
