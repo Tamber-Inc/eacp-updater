@@ -15,7 +15,7 @@ set(EACP_REAL_UPDATE_DEMO_MANIFEST_URL
 
 add_executable(RealUpdateDemo MACOSX_BUNDLE Main.cpp)
 set_default_target_setting(RealUpdateDemo)
-target_link_libraries(RealUpdateDemo PRIVATE eacp-graphics eacp-updater)
+target_link_libraries(RealUpdateDemo PRIVATE eacp-graphics eacp-network eacp-updater)
 eacp_set_gui_subsystem(RealUpdateDemo)
 
 target_compile_definitions(RealUpdateDemo

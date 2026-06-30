@@ -7,13 +7,6 @@ import { fileURLToPath } from 'node:url';
 export const scriptsDir = dirname(dirname(fileURLToPath(import.meta.url)));
 export const repoRoot = resolve(scriptsDir, '..');
 
-export function eacpSourceDir() {
-  return process.env.EACP_SOURCE_DIR
-    ?? (existsSync(resolve(repoRoot, 'core-eacp'))
-      ? resolve(repoRoot, 'core-eacp')
-      : resolve(repoRoot, '..', 'eacp'));
-}
-
 export function log(message) {
   console.log(`\n==> ${message}`);
 }

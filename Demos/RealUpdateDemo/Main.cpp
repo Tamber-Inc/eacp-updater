@@ -1,14 +1,10 @@
-#include <eacp/Core/Process/Process.h>
 #include <eacp/Graphics/Graphics.h>
+#include <eacp/Network/HTTP/Http.h>
 #include <eacp/Updater/Updater.h>
 
 #include <Miro/Miro.h>
 
-#include <algorithm>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <sstream>
 #include <string>
 
 #ifndef EACP_REAL_UPDATE_DEMO_VERSION
@@ -20,9 +16,8 @@
     "https://github.com/Tamber-Inc/eacp-updater/releases/download/remote-demo-v1/manifest.json"
 #endif
 
-namespace fs = std::filesystem;
 namespace Graphics = eacp::Graphics;
-namespace Processes = eacp::Processes;
+namespace HTTP = eacp::HTTP;
 namespace Updater = eacp::Updater;
 
 namespace
@@ -30,34 +25,13 @@ namespace
 constexpr std::string_view defaultManifestUrl =
     EACP_REAL_UPDATE_DEMO_MANIFEST_URL;
 
-std::string readFile(const fs::path& path)
-{
-    auto in = std::ifstream(path, std::ios::binary);
-    if (!in)
-        return {};
-
-    auto out = std::ostringstream();
-    out << in.rdbuf();
-    return out.str();
-}
-
 std::string downloadText(std::string_view url)
 {
-    auto output = fs::temp_directory_path() / "eacp-real-update-demo-manifest.json";
-    auto result = Processes::run(
-        "/usr/bin/curl",
-        {"--fail",
-         "--location",
-         "--silent",
-         "--show-error",
-         std::string(url),
-         "--output",
-         output.string()});
-
-    if (!result.exited || result.exitCode != 0)
+    auto response = HTTP::Request(std::string(url)).perform();
+    if (response.statusCode < 200 || response.statusCode >= 300)
         return {};
 
-    return readFile(output);
+    return response.content;
 }
 
 std::string updateStatusText()

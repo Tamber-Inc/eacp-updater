@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { accessSync, constants } from 'node:fs';
 
 import {
-  eacpSourceDir,
   capture,
   cleanDir,
   env,
@@ -94,7 +93,6 @@ function buildVersion(version) {
     repoRoot,
     '-B',
     buildDir,
-    `-DEACP_SOURCE_DIR=${eacpSourceDir()}`,
     '-DCMAKE_BUILD_TYPE=Release',
     `-DEACP_REAL_UPDATE_DEMO_VERSION=${version}`,
   ]);

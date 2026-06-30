@@ -14,8 +14,8 @@ This repo contains:
 - Demo AppHub tests in `Tests/Demos/AppHub`.
 - Update packaging, publishing, signing, promotion, and local demo scripts.
 
-Core EACP is consumed as a dependency through `EACP_SOURCE_DIR`; updater and hub
-targets are defined here, not by adding the full EACP source tree.
+Core EACP is consumed through CPM from `eyalamirmusic/eacp@main`; updater and hub
+targets are defined here.
 
 The boundary is intentional:
 
@@ -26,12 +26,10 @@ The boundary is intentional:
 ## Build
 
 ```sh
-cmake -S . -B build -DEACP_SOURCE_DIR=../eacp
+cmake -S . -B build
 cmake --build build
 ctest --test-dir build
 ```
-
-`EACP_SOURCE_DIR` defaults to `../eacp` for sibling checkouts.
 
 Disable demos when you only want the reusable libraries:
 

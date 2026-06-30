@@ -3,7 +3,6 @@
 import { join } from 'node:path';
 
 import {
-  eacpSourceDir,
   cleanDir,
   env,
   log,
@@ -50,7 +49,6 @@ run('cmake', [
   repoRoot,
   '-B',
   buildDir,
-  `-DEACP_SOURCE_DIR=${eacpSourceDir()}`,
   '-DCMAKE_BUILD_TYPE=Release',
   `-DCMAKE_OSX_DEPLOYMENT_TARGET=${macOSDeploymentTarget}`,
   `-DEACP_APPHUB_VERSION=${version}`,

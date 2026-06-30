@@ -3,7 +3,6 @@
 import { join } from 'node:path';
 
 import {
-  eacpSourceDir,
   cleanDir,
   env,
   log,
@@ -65,7 +64,6 @@ function buildAppHub(version, build, extraDefs = []) {
     repoRoot,
     '-B',
     build,
-    `-DEACP_SOURCE_DIR=${eacpSourceDir()}`,
     '-DCMAKE_BUILD_TYPE=Release',
     `-DEACP_APPHUB_VERSION=${version}`,
     ...extraDefs,
