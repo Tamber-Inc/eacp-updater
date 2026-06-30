@@ -49,3 +49,13 @@ op run --env-file=.github/op/tamber-signing.env -- \
 That builds, signs, notarizes, packages `AppHub-${VERSION}.pkg`, uploads the app
 update artifacts to the GitHub release, and uploads the installer package plus
 `hub-installer.json` to the configured AppHub bucket channel.
+
+To publish only the AppHub channel metadata for an already-uploaded installer
+package:
+
+```sh
+node Scripts/update-apphub-channel.mjs stable 2.0.0
+```
+
+That validates `channels/stable/artifacts/AppHub-2.0.0.pkg`, writes an empty
+AppHub product catalog, updates `index.json`, and writes `hub-installer.json`.
