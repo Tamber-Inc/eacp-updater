@@ -219,12 +219,12 @@ jobs:
           xcrun stapler validate "${smoke_root}/AppHub.app"
           spctl --assess --type execute --verbose=4 "${smoke_root}/AppHub.app"
           codesign --verify --strict --verbose=2 \
-            "${smoke_root}/AppHub.app/Contents/Library/LaunchServices/com.tamber.AppHub.PrivilegedHelper"
+            "${smoke_root}/AppHub.app/Contents/Library/LaunchServices/music.tamber.AppHub.PrivilegedHelper"
 
           /usr/bin/perl -e 'alarm shift; exec @ARGV' 60 \
             sudo "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
           codesign --verify --strict --verbose=2 \
-            /Library/PrivilegedHelperTools/com.tamber.AppHub.PrivilegedHelper
+            /Library/PrivilegedHelperTools/music.tamber.AppHub.PrivilegedHelper
 
           "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
             --root "${smoke_root}/hub-state" \
