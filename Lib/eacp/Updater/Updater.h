@@ -129,6 +129,7 @@ struct ProductT
     std::string bundleName;
     std::string channel = "stable";
     std::string latestVersion;
+    std::string minimumLaunchVersion;
     Vector<std::string> dependencies;
     Vector<ArtifactType> artifacts;
 
@@ -138,6 +139,7 @@ struct ProductT
                  bundleName,
                  channel,
                  latestVersion,
+                 minimumLaunchVersion,
                  dependencies,
                  artifacts)
 };

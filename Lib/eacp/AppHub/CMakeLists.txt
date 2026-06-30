@@ -2,11 +2,14 @@ add_library(eacp-apphub STATIC)
 
 target_sources(eacp-apphub PRIVATE
         AppHubPlatform.h
-        AppHubTypes.h)
+        AppHubTypes.h
+        LaunchGuardIpc.cpp
+        LaunchGuardIpc.h)
 
 if (APPLE)
     target_sources(eacp-apphub PRIVATE
             AppHubPlatform-macOS.mm
+            LaunchGuardIpc-macOS.mm
             ../Updater/PrivilegedHelper/PrivilegedHelper-macOS.mm)
     target_link_libraries(eacp-apphub PRIVATE
             "-framework AppKit"
@@ -16,10 +19,12 @@ if (APPLE)
 elseif (WIN32)
     target_sources(eacp-apphub PRIVATE
             AppHubPlatform-Windows.cpp
+            LaunchGuardIpc-Windows.cpp
             ../Updater/PrivilegedHelper/PrivilegedHelper-Unsupported.cpp)
 else ()
     target_sources(eacp-apphub PRIVATE
             AppHubPlatform-Windows.cpp
+            LaunchGuardIpc-Unsupported.cpp
             ../Updater/PrivilegedHelper/PrivilegedHelper-Unsupported.cpp)
 endif ()
 

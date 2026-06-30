@@ -1,5 +1,7 @@
 #include "AppHubApi.h"
 
+#include <eacp/AppHub/LaunchGuardIpc.h>
+
 #include <NanoTest/NanoTest.h>
 
 #include <cstdlib>
@@ -11,6 +13,7 @@
 using namespace nano;
 namespace fs = std::filesystem;
 namespace Updater = eacp::Updater;
+namespace LaunchGuard = eacp::AppHub;
 
 namespace
 {
@@ -156,6 +159,30 @@ public:
 private:
     std::string name_;
 };
+
+class RecordingLaunchGuardTransport final
+    : public LaunchGuard::LaunchGuardIpcTransport
+{
+public:
+    explicit RecordingLaunchGuardTransport(
+        LaunchGuard::LaunchGuardIpcExchange response)
+        : response_(std::move(response))
+    {
+    }
+
+    LaunchGuard::LaunchGuardIpcExchange exchange(
+        std::string_view payload) override
+    {
+        payload_ = std::string(payload);
+        return response_;
+    }
+
+    std::string payload() const { return payload_; }
+
+private:
+    LaunchGuard::LaunchGuardIpcExchange response_;
+    std::string payload_;
+};
 } // namespace
 
 namespace AppHub
@@ -288,6 +315,163 @@ auto tOpenProductDoesNotMarkRunningWhenLaunchFails =
     check(result.message == "test launch failed");
     check(launchProbe().launchedPath == appPath);
     check(!fs::exists(root / "running" / "com.eacp.maze.running"));
+};
+
+auto tLaunchGuardRequestAndResultAreMiroStrings =
+    test("AppHub/launchGuardRequestAndResultAreMiroStrings") = []
+{
+    auto request = LaunchGuard::LaunchCheckRequest();
+    request.productId = "com.eacp.maze";
+    request.version = "1.2.3";
+    request.channel = "stable";
+    request.bundlePath = "/Applications/Tamber Apps/Maze.app";
+    request.openHubOnBlock = false;
+
+    auto parsedRequest = LaunchGuard::launchCheckRequestFromString(
+        LaunchGuard::launchCheckRequestToString(request));
+    check(parsedRequest.productId == request.productId);
+    check(parsedRequest.version == request.version);
+    check(parsedRequest.channel == request.channel);
+    check(parsedRequest.bundlePath == request.bundlePath);
+    check(!parsedRequest.openHubOnBlock);
+
+    auto result = LaunchGuard::LaunchCheckResult();
+    result.decision = LaunchGuard::LaunchDecision::UpdateRequired;
+    result.productId = request.productId;
+    result.installedVersion = "1.2.3";
+    result.latestVersion = "2.0.0";
+    result.minimumLaunchVersion = "2.0.0";
+    result.message = "Update required";
+    result.hubDeepLink = "tamberhub://product/com.eacp.maze";
+    result.hubOpened = true;
+
+    auto parsedResult = LaunchGuard::launchCheckResultFromString(
+        LaunchGuard::launchCheckResultToString(result));
+    check(parsedResult.decision == result.decision);
+    check(parsedResult.productId == result.productId);
+    check(parsedResult.installedVersion == result.installedVersion);
+    check(parsedResult.latestVersion == result.latestVersion);
+    check(parsedResult.minimumLaunchVersion == result.minimumLaunchVersion);
+    check(parsedResult.message == result.message);
+    check(parsedResult.hubDeepLink == result.hubDeepLink);
+    check(parsedResult.hubOpened);
+};
+
+auto tLaunchGuardHandlerConsumesMiroStringPayload =
+    test("AppHub/launchGuardHandlerConsumesMiroStringPayload") = []
+{
+    auto request = LaunchGuard::LaunchCheckRequest();
+    request.productId = "com.eacp.maze";
+    request.version = "1.0.0";
+
+    auto response = LaunchGuard::handleLaunchGuardIpcRequest(
+        LaunchGuard::launchCheckRequestToString(request),
+        [](const LaunchGuard::LaunchCheckRequest& parsed)
+        {
+            auto result = LaunchGuard::LaunchCheckResult();
+            result.decision = LaunchGuard::LaunchDecision::UpdateAvailable;
+            result.productId = parsed.productId;
+            result.installedVersion = parsed.version;
+            result.latestVersion = "1.1.0";
+            result.message = "Update available";
+            return result;
+        });
+
+    auto result = LaunchGuard::launchCheckResultFromString(response);
+    check(result.decision == LaunchGuard::LaunchDecision::UpdateAvailable);
+    check(result.productId == "com.eacp.maze");
+    check(result.installedVersion == "1.0.0");
+    check(result.latestVersion == "1.1.0");
+};
+
+auto tLaunchGuardHandlerReturnsBlockingResultForInvalidPayload =
+    test("AppHub/launchGuardHandlerReturnsBlockingResultForInvalidPayload") = []
+{
+    auto response = LaunchGuard::handleLaunchGuardIpcRequest(
+        "not json",
+        [](const LaunchGuard::LaunchCheckRequest&)
+        {
+            auto result = LaunchGuard::LaunchCheckResult();
+            result.decision = LaunchGuard::LaunchDecision::Allow;
+            return result;
+        });
+
+    auto result = LaunchGuard::launchCheckResultFromString(response);
+    check(result.decision == LaunchGuard::LaunchDecision::UnknownBlock);
+    check(result.message == "invalid launch guard request");
+};
+
+auto tLaunchGuardClientUsesMiroStringTransport =
+    test("AppHub/launchGuardClientUsesMiroStringTransport") = []
+{
+    auto response = LaunchGuard::LaunchCheckResult();
+    response.decision = LaunchGuard::LaunchDecision::UpdateRequired;
+    response.productId = "com.eacp.maze";
+    response.minimumLaunchVersion = "3.0.0";
+    response.message = "Update required";
+
+    auto transport = RecordingLaunchGuardTransport(
+        {.ok = true,
+         .payload = LaunchGuard::launchCheckResultToString(response)});
+
+    auto request = LaunchGuard::LaunchCheckRequest();
+    request.productId = "com.eacp.maze";
+    request.version = "2.0.0";
+    auto result = LaunchGuard::checkLaunchOverIpc(transport, request);
+    auto sent = LaunchGuard::launchCheckRequestFromString(transport.payload());
+
+    check(sent.productId == "com.eacp.maze");
+    check(sent.version == "2.0.0");
+    check(result.decision == LaunchGuard::LaunchDecision::UpdateRequired);
+    check(result.minimumLaunchVersion == "3.0.0");
+};
+
+auto tLaunchGuardClientFailsOpenOnTransportError =
+    test("AppHub/launchGuardClientFailsOpenOnTransportError") = []
+{
+    auto transport = RecordingLaunchGuardTransport(
+        {.ok = false, .error = "agent unavailable"});
+
+    auto result = LaunchGuard::checkLaunchOverIpc(
+        transport,
+        {.productId = "com.eacp.maze", .version = "2.0.0"});
+
+    check(result.decision == LaunchGuard::LaunchDecision::UnknownAllow);
+    check(result.message == "agent unavailable");
+};
+
+auto tLaunchGuardFramesRoundTripAndSupportPartialReads =
+    test("AppHub/launchGuardFramesRoundTripAndSupportPartialReads") = []
+{
+    auto frame = LaunchGuard::encodeLaunchGuardFrame("hello");
+    check(frame.size() == 9);
+
+    auto partial = LaunchGuard::decodeLaunchGuardFrame(
+        std::string_view(frame.data(), 3));
+    check(partial.status == LaunchGuard::LaunchGuardFrameStatus::NeedMoreData);
+
+    partial = LaunchGuard::decodeLaunchGuardFrame(
+        std::string_view(frame.data(), 6));
+    check(partial.status == LaunchGuard::LaunchGuardFrameStatus::NeedMoreData);
+
+    auto decoded = LaunchGuard::decodeLaunchGuardFrame(frame + "next");
+    check(decoded.status == LaunchGuard::LaunchGuardFrameStatus::Ready);
+    check(decoded.payload == "hello");
+    check(decoded.bytesConsumed == frame.size());
+};
+
+auto tLaunchGuardFrameRejectsOversizedPayload =
+    test("AppHub/launchGuardFrameRejectsOversizedPayload") = []
+{
+    auto frame = std::string();
+    frame.push_back(static_cast<char>(0xff));
+    frame.push_back(static_cast<char>(0xff));
+    frame.push_back(static_cast<char>(0xff));
+    frame.push_back(static_cast<char>(0xff));
+
+    auto decoded = LaunchGuard::decodeLaunchGuardFrame(frame);
+    check(decoded.status == LaunchGuard::LaunchGuardFrameStatus::Invalid);
+    check(decoded.error == "launch guard payload is too large");
 };
 
 auto tOpenProductMarksRunningOnlyAfterLaunchSucceeds =

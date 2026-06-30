@@ -434,6 +434,7 @@ Product readProduct(const Miro::Json::Object& object)
     product.bundleName = readString(object, "bundleName");
     product.channel = readString(object, "channel", product.channel);
     product.latestVersion = readString(object, "latestVersion");
+    product.minimumLaunchVersion = readString(object, "minimumLaunchVersion");
     product.dependencies = readStringArray(object, "dependencies");
     product.artifacts = readProductArtifacts(object);
     return product;

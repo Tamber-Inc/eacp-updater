@@ -1,5 +1,7 @@
 nano_add_executable(AppHubTests
-        SOURCES AppHubApiTests.cpp
+        SOURCES
+            AppHubApiTests.cpp
+            ${CMAKE_SOURCE_DIR}/Lib/eacp/AppHub/LaunchGuardIpc.cpp
         TARGETS eacp-hub eacp-updater eacp-network)
 
 target_include_directories(AppHubTests PRIVATE
