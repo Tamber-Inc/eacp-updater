@@ -13,8 +13,10 @@ import {
   writeJson,
 } from './lib/cli.mjs';
 import {
+  buildSignedComponentPkg,
   ensureTamberSigningIdentity,
   notarizeAndStapleApps,
+  notarizeAndStaplePkgs,
   signPath,
   validateStapledApp,
   verifyAppHubDeploymentTarget,
@@ -32,11 +34,19 @@ const releaseBaseUrl = env(
 const outDir = env('OUT_DIR', join(repoRoot, 'dist', 'remote-hub-update'));
 const buildDir = env('BUILD_DIR', join(repoRoot, `build-remote-hub-update-${version}`));
 const macOSDeploymentTarget = env('EACP_MACOS_DEPLOYMENT_TARGET', '11.0');
+const channel = normalizeChannel(env('APPHUB_CHANNEL', env('CHANNEL', 'stable')));
+const storageRoot = stripTrailingSlash(env('APPHUB_STORAGE_ROOT', 'gs://tamber-artifacts/jamie-updater-demo'));
+const publicRoot = stripTrailingSlash(env('APPHUB_PUBLIC_ROOT', 'https://storage.googleapis.com/tamber-artifacts/jamie-updater-demo'));
 
 const appHubAppName = 'AppHub.app';
 const appHubBinaryName = 'AppHub';
 const appHubZip = `AppHub-${version}.app.zip`;
+const appHubPkg = `AppHub-${version}.pkg`;
 const productId = 'com.tamber.AppHub';
+const channelPath = safeChannelPath(channel);
+const installerManifestName = 'hub-installer.json';
+const appHubPkgObject = `channels/${channelPath}/artifacts/${appHubPkg}`;
+const installerManifestObject = `channels/${channelPath}/${installerManifestName}`;
 
 requireMacOS('Remote AppHub update publishing');
 
@@ -78,11 +88,21 @@ verifyAppHubPrivilegedHelper(appHubApp);
 log(`Notarize and staple AppHub ${version}`);
 notarizeAndStapleApps([appHubApp]);
 
+log(`Build signed AppHub installer package ${version}`);
+cleanDir(outDir);
+const appHubPkgPath = join(outDir, appHubPkg);
+buildSignedComponentPkg({
+  component: appHubApp,
+  output: appHubPkgPath,
+});
+
+log(`Notarize and staple AppHub installer package ${version}`);
+notarizeAndStaplePkgs([appHubPkgPath]);
+
 log('Verify AppHub version');
 run(join(appHubApp, 'Contents', 'MacOS', appHubBinaryName), ['--version']);
 
 log(`Package AppHub ${version}`);
-cleanDir(outDir);
 run('ditto', ['-c', '-k', '--keepParent', appHubApp, join(outDir, appHubZip)]);
 
 log(`Verify packaged AppHub ${version}`);
@@ -97,6 +117,7 @@ validateStapledApp(packagedAppHub);
 verifyGatekeeperApp(packagedAppHub);
 
 const appHubSha = sha256File(join(outDir, appHubZip));
+const appHubPkgSha = sha256File(appHubPkgPath);
 const manifest = {
   productId,
   name: appHubBinaryName,
@@ -109,17 +130,61 @@ const manifest = {
 };
 writeJson(join(outDir, 'hub-manifest.json'), manifest);
 
+const installerManifest = {
+  productId,
+  name: appHubBinaryName,
+  version,
+  bundleName: appHubAppName,
+  package: {
+    url: `${publicRoot}/${appHubPkgObject}`,
+    sha256: appHubPkgSha,
+  },
+};
+writeJson(join(outDir, installerManifestName), installerManifest);
+
 log('Update release Hub manifest and app artifact');
 run('gh', [
   'release',
   'upload',
   releaseTag,
   join(outDir, appHubZip),
+  appHubPkgPath,
   join(outDir, 'hub-manifest.json'),
+  join(outDir, installerManifestName),
   '--repo',
   'Tamber-Inc/eacp-updater',
   '--clobber',
 ]);
 
+log(`Upload AppHub installer package ${version} to ${channel} bucket`);
+run('gcloud', [
+  'storage',
+  'cp',
+  appHubPkgPath,
+  `${storageRoot}/${appHubPkgObject}`,
+  '--cache-control=no-cache,max-age=0',
+]);
+run('gcloud', [
+  'storage',
+  'cp',
+  join(outDir, installerManifestName),
+  `${storageRoot}/${installerManifestObject}`,
+  '--content-type=application/json',
+  '--cache-control=no-cache,max-age=0',
+]);
+
 log(`Published AppHub ${version}`);
 console.log(JSON.stringify(manifest, null, 2));
+console.log(JSON.stringify(installerManifest, null, 2));
+
+function normalizeChannel(value) {
+  return value.trim() || 'stable';
+}
+
+function safeChannelPath(value) {
+  return normalizeChannel(value).replace(/[^A-Za-z0-9._-]/g, '-');
+}
+
+function stripTrailingSlash(value) {
+  return value.replace(/\/+$/, '');
+}

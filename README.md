@@ -36,3 +36,16 @@ Disable demos when you only want the reusable libraries:
 ```sh
 cmake -S . -B build-lib -DEACP_UPDATER_BUILD_DEMOS=OFF
 ```
+
+## Publish AppHub
+
+The local AppHub update path is the same script CI runs:
+
+```sh
+op run --env-file=.github/op/tamber-signing.env -- \
+  node Scripts/build-and-publish-app.mjs apphub "$VERSION" "$APPHUB_CHANNEL"
+```
+
+That builds, signs, notarizes, packages `AppHub-${VERSION}.pkg`, uploads the app
+update artifacts to the GitHub release, and uploads the installer package plus
+`hub-installer.json` to the configured AppHub bucket channel.

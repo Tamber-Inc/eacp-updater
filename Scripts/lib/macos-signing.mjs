@@ -1,6 +1,6 @@
 import { homedir, tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 
 import { capture, fileExists, requireEnv, requireMacOS, run } from './cli.mjs';
 
@@ -65,6 +65,14 @@ export function ensureTamberSigningIdentity(keychainPath = remoteDemoKeychainPat
       rmSync(tempDir, { recursive: true, force: true });
     }
   }
+
+  importCertificateIfNeeded({
+    identity: process.env.APPLE_INSTALLER_SIGNING_IDENTITY,
+    certificateBase64: process.env.APPLE_INSTALLER_CERTIFICATE_BASE64,
+    certificatePassword: process.env.APPLE_INSTALLER_CERTIFICATE_PASSWORD,
+    keychainPath,
+    label: 'Apple installer certificate import',
+  });
 
   run('security', [
     'set-key-partition-list',
@@ -135,12 +143,65 @@ export function notarizeAndStapleApps(appBundles) {
   }
 }
 
+export function buildSignedComponentPkg({
+  component,
+  installLocation = '/Applications',
+  output,
+  keychainPath = remoteDemoKeychainPath,
+}) {
+  requireMacOS('Apple package signing');
+  requireEnv(['APPLE_INSTALLER_SIGNING_IDENTITY'], 'Apple package signing');
+  mkdirSync(dirname(output), { recursive: true });
+  rmSync(output, { force: true });
+  run('productbuild', [
+    '--component',
+    component,
+    installLocation,
+    '--sign',
+    process.env.APPLE_INSTALLER_SIGNING_IDENTITY,
+    '--keychain',
+    keychainPath,
+    output,
+  ]);
+  verifyPkgSignature(output);
+}
+
+export function notarizeAndStaplePkgs(pkgs) {
+  requireMacOS('Apple package notarization');
+  if (pkgs.length === 0) {
+    return;
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'eacp-pkg-notary-'));
+  const notaryKey = writeNotaryKeyIfNeeded(tempDir);
+
+  try {
+    for (const pkg of pkgs) {
+      verifyPkgSignature(pkg);
+      run('xcrun', ['notarytool', 'submit', pkg, ...notaryAuthArgs(notaryKey), '--wait']);
+      run('xcrun', ['stapler', 'staple', pkg]);
+      validateStapledApp(pkg);
+      verifyGatekeeperPkg(pkg);
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 export function validateStapledApp(path) {
   run('xcrun', ['stapler', 'validate', path]);
 }
 
 export function verifyGatekeeperApp(path) {
   run('spctl', ['--assess', '--type', 'execute', '--verbose=4', path]);
+}
+
+export function verifyGatekeeperPkg(path) {
+  run('spctl', ['--assess', '--type', 'install', '--verbose=4', path]);
+}
+
+export function verifyPkgSignature(path) {
+  run('pkgutil', ['--check-signature', path]);
 }
 
 export function verifyAppHubPrivilegedHelper(
@@ -194,6 +255,61 @@ function hasSigningIdentity(keychainPath) {
     check: false,
   });
   return result.stdout.includes(`"${process.env.APPLE_SIGNING_IDENTITY}"`);
+}
+
+function importCertificateIfNeeded({
+  identity,
+  certificateBase64,
+  certificatePassword,
+  keychainPath,
+  label,
+}) {
+  if (!identity || hasSpecificSigningIdentity(keychainPath, identity)) {
+    return;
+  }
+  if (!certificateBase64 || !certificatePassword) {
+    return;
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'eacp-codesign-extra-'));
+  const p12 = join(tempDir, 'cert.p12');
+  try {
+    writeFileSync(p12, Buffer.from(certificateBase64, 'base64'), { mode: 0o600 });
+    run('security', [
+      'import',
+      p12,
+      '-k',
+      keychainPath,
+      '-P',
+      certificatePassword,
+      '-T',
+      '/usr/bin/productbuild',
+      '-T',
+      '/usr/bin/pkgbuild',
+      '-T',
+      '/usr/bin/security',
+    ]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  if (!hasSpecificSigningIdentity(keychainPath, identity)) {
+    throw new Error(`${label}: signing identity not found after import: ${identity}`);
+  }
+}
+
+function hasSpecificSigningIdentity(keychainPath, identity) {
+  const result = capture('security', ['find-identity', '-v', keychainPath], {
+    check: false,
+  });
+  if (result.stdout.includes(`"${identity}"`)) {
+    return true;
+  }
+
+  const certResult = capture('security', ['find-certificate', '-c', identity, keychainPath], {
+    check: false,
+  });
+  return certResult.status === 0;
 }
 
 function writeNotaryKeyIfNeeded(tempDir) {
