@@ -64,18 +64,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          op item get ops \
+          op item list \
             --vault Tamber-Production \
-            --format json \
-            --reveal > "${RUNNER_TEMP}/op-ops.json"
+            --format json > "${RUNNER_TEMP}/op-items.json"
 
-          OP_ITEM_JSON="${RUNNER_TEMP}/op-ops.json" \
+          OP_ITEM_LIST_JSON="${RUNNER_TEMP}/op-items.json" \
           GOOGLE_APPLICATION_CREDENTIALS="${RUNNER_TEMP}/gcloud-service-account.json" \
           node <<'NODE'
           const fs = require('node:fs');
-
-          const item = JSON.parse(fs.readFileSync(process.env.OP_ITEM_JSON, 'utf8'));
-          const fields = Array.isArray(item.fields) ? item.fields : [];
+          const { execFileSync } = require('node:child_process');
 
           function normalize(value) {
             return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -104,26 +101,51 @@ jobs:
             return undefined;
           }
 
-          const preferred = fields.filter((field) => {
-            const label = normalize(field.label);
-            return label.includes('gcloud')
-              || label.includes('googlecloud')
-              || label.includes('gcp')
-              || label.includes('serviceaccount')
-              || label.includes('credentials');
-          });
+          function isPreferred(value) {
+            const normalized = normalize(value);
+            return normalized.includes('gcloud')
+              || normalized.includes('googlecloud')
+              || normalized.includes('gcp')
+              || normalized.includes('serviceaccount')
+              || normalized.includes('credentials');
+          }
 
-          for (const field of [...preferred, ...fields]) {
-            const credentials = parseCredentials(field.value);
-            if (credentials) {
-              fs.writeFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, credentials, {
-                mode: 0o600,
-              });
-              process.exit(0);
+          function itemJson(item) {
+            return JSON.parse(execFileSync('op', [
+              'item',
+              'get',
+              item.id,
+              '--format',
+              'json',
+              '--reveal',
+            ], { encoding: 'utf8' }));
+          }
+
+          const items = JSON.parse(fs.readFileSync(process.env.OP_ITEM_LIST_JSON, 'utf8'));
+          const preferredItems = items.filter((item) => isPreferred(item.title));
+          const orderedItems = [...preferredItems, ...items.filter((item) => !preferredItems.includes(item))];
+
+          for (const itemSummary of orderedItems) {
+            const item = itemJson(itemSummary);
+            const fields = Array.isArray(item.fields) ? item.fields : [];
+            const preferredFields = fields.filter((field) => isPreferred(field.label));
+            const orderedFields = [
+              ...preferredFields,
+              ...fields.filter((field) => !preferredFields.includes(field)),
+            ];
+
+            for (const field of orderedFields) {
+              const credentials = parseCredentials(field.value);
+              if (credentials) {
+                fs.writeFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, credentials, {
+                  mode: 0o600,
+                });
+                process.exit(0);
+              }
             }
           }
 
-          throw new Error('No Google Cloud service account JSON found in op://Tamber-Production/ops');
+          throw new Error('No Google Cloud service account JSON found in the Tamber-Production vault');
           NODE
 
           gcloud auth activate-service-account \
