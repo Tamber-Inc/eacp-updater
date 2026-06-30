@@ -13,10 +13,6 @@ import {
   sha256File,
   writeJson,
 } from './lib/cli.mjs';
-import {
-  catalogProducts,
-  replaceCatalogProduct,
-} from './lib/apphub-catalog.mjs';
 
 const [filePath, versionArg, channelArg] = process.argv.slice(2);
 
@@ -121,23 +117,29 @@ run('gcloud', [
 console.log(JSON.stringify({ product: nextCatalog.products.find((entry) => entry.id === product.id), catalogUrl }, null, 2));
 
 function productFor(path) {
-  const explicit = env('APPHUB_PRODUCT_ID', '');
-  if (explicit) {
-    return {
-      id: explicit,
-      name: env('APPHUB_PRODUCT_NAME', explicit),
-      kind: env('APPHUB_PRODUCT_KIND', 'Blob'),
-    };
+  const id = env('APPHUB_PRODUCT_ID', '').trim();
+  if (!id) {
+    throw new Error('APPHUB_PRODUCT_ID is required to publish a generic artifact.');
   }
+  return {
+    id,
+    name: env('APPHUB_PRODUCT_NAME', id),
+    kind: env('APPHUB_PRODUCT_KIND', inferKind(path)),
+  };
+}
 
-  const name = basename(path).toLowerCase();
-  if (name.endsWith('.json')) return catalogProducts.jsonDemo;
-  if (name.includes('clap')) return catalogProducts.model;
-  if (name.includes('onnx')) return catalogProducts.runtime;
+function replaceCatalogProduct(catalog, product) {
+  return {
+    ...catalog,
+    products: [
+      ...(catalog.products ?? []).filter((entry) => entry.id !== product.id),
+      product,
+    ].sort((left, right) => left.id.localeCompare(right.id)),
+  };
+}
 
-  throw new Error(
-    'Could not infer product. Set APPHUB_PRODUCT_ID, APPHUB_PRODUCT_NAME, and APPHUB_PRODUCT_KIND.',
-  );
+function inferKind(path) {
+  return extname(path).toLowerCase() === '.app' ? 'App' : 'Blob';
 }
 
 function downloadOrDefault(source, destination, fallback) {
