@@ -48,6 +48,7 @@ endif ()
 
 include(TargetSetup)
 include(EacpSchema)
+include(AppHubCatalog)
 
 if (PROJECT_IS_TOP_LEVEL)
     eacp_default_setup()
