@@ -1,0 +1,310 @@
+name: Publish Remote Signed Demo
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Demo app version to build and publish.
+        required: true
+        default: 1.0.0
+      release_tag:
+        description: GitHub Release tag for the signed remote demo.
+        required: true
+        default: remote-demo-v1
+      channel:
+        description: AppHub catalog channel to publish, e.g. stable, develop, jp/feat/foo. Non-stable maps to apphub-channel-<safe-channel>.
+        required: false
+        default: stable
+      include_hub:
+        description: Publish a freshly built AppHub artifact as well as the Demo App.
+        required: true
+        default: 'true'
+      publish_hub_update:
+        description: Publish AppHub itself as a remote update instead of publishing the Demo App.
+        required: true
+        default: 'false'
+      catalog_product_id:
+        description: Publish only one generated AppHub catalog product, for example com.eacp.maze.
+        required: false
+        default: ''
+      catalog_target:
+        description: CMake target for catalog_product_id when publishing one catalog product.
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build, Sign, Publish, Smoke Install
+    runs-on: macos-15-xlarge
+
+    env:
+      VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
+      APPHUB_CHANNEL: ${{ inputs.channel }}
+      EACP_MACOS_DEPLOYMENT_TARGET: '11.0'
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      APPHUB_CATALOG_PRODUCT_ID: ${{ inputs.catalog_product_id }}
+      APPHUB_CATALOG_TARGET: ${{ inputs.catalog_target }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: 1password/install-cli-action@v3
+        with:
+          version: 2.34.0
+
+      - name: Capture existing hub artifact hash
+        if: inputs.include_hub != 'true' && inputs.publish_hub_update != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/remote-signed-demo
+          if gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern AppHub-remote-demo.app.zip \
+            --dir dist/existing-hub >/dev/null 2>&1; then
+            shasum -a 256 dist/existing-hub/AppHub-remote-demo.app.zip \
+              | awk '{print $1}' > dist/remote-signed-demo/apphub-before.sha256
+          else
+            echo "No existing AppHub artifact found for app-only update." >&2
+            exit 1
+          fi
+
+      - name: Build signed release assets
+        if: inputs.include_hub == 'true' && inputs.publish_hub_update != 'true'
+        run: >
+          op run
+          --env-file=.github/op/tamber-signing.env
+          --
+          node Scripts/package-remote-signed-demo-assets.mjs
+
+      - name: Build and upload signed Demo App update
+        if: inputs.include_hub != 'true' && inputs.publish_hub_update != 'true' && inputs.catalog_product_id == ''
+        run: >
+          op run
+          --env-file=.github/op/tamber-signing.env
+          --
+          node Scripts/build-and-publish-app.mjs demo "$VERSION" "$APPHUB_CHANNEL"
+
+      - name: Build and upload signed catalog app update
+        if: inputs.include_hub != 'true' && inputs.publish_hub_update != 'true' && inputs.catalog_product_id != ''
+        run: >
+          op run
+          --env-file=.github/op/tamber-signing.env
+          --
+          node Scripts/build-and-publish-app.mjs "$APPHUB_CATALOG_PRODUCT_ID" "$VERSION" "$APPHUB_CHANNEL"
+
+      - name: Build and upload signed AppHub update
+        if: inputs.publish_hub_update == 'true'
+        run: >
+          op run
+          --env-file=.github/op/tamber-signing.env
+          --
+          node Scripts/build-and-publish-app.mjs apphub "$VERSION" "$APPHUB_CHANNEL"
+
+      - name: Create or update release
+        if: inputs.include_hub == 'true' && inputs.publish_hub_update != 'true'
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/remote-signed-demo/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/remote-signed-demo/* \
+              --target "$GITHUB_SHA" \
+              --title "Remote signed demo ${VERSION}" \
+              --notes "Signed AppHub and Demo App ${VERSION} remote install smoke artifacts."
+          fi
+
+      - name: Verify hub artifact stayed unchanged
+        if: inputs.include_hub != 'true' && inputs.publish_hub_update != 'true'
+        run: |
+          set -euo pipefail
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern AppHub-remote-demo.app.zip \
+            --dir dist/current-hub
+          current="$(shasum -a 256 dist/current-hub/AppHub-remote-demo.app.zip | awk '{print $1}')"
+          before="$(cat dist/remote-signed-demo/apphub-before.sha256)"
+          test "$current" = "$before"
+          echo "AppHub artifact unchanged: $current"
+
+      - name: Smoke install Demo App from published internet artifacts
+        if: inputs.publish_hub_update != 'true' && inputs.catalog_product_id == ''
+        run: |
+          set -euo pipefail
+
+          smoke_root="$(mktemp -d)"
+          apphub_zip="${smoke_root}/AppHub-remote-demo.app.zip"
+          manifest_url="${RELEASE_BASE_URL}/manifest.json"
+
+          curl --fail --location --silent --show-error \
+            "${RELEASE_BASE_URL}/AppHub-remote-demo.app.zip" \
+            --output "$apphub_zip"
+
+          ditto -x -k "$apphub_zip" "$smoke_root"
+          codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
+          xcrun stapler validate "${smoke_root}/AppHub.app"
+          spctl --assess --type execute --verbose=4 "${smoke_root}/AppHub.app"
+          codesign --verify --strict --verbose=2 \
+            "${smoke_root}/AppHub.app/Contents/Library/LaunchServices/com.tamber.AppHub.PrivilegedHelper"
+
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 60 \
+            sudo "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
+          codesign --verify --strict --verbose=2 \
+            /Library/PrivilegedHelperTools/com.tamber.AppHub.PrivilegedHelper
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            remote-install \
+            --manifest-url "$manifest_url"
+
+          installed="/Applications/Tamber Local Update Demo.app/Contents/MacOS/Tamber Local Update Demo"
+          test -x "$installed"
+          installed_version="$("$installed" --version)"
+          test "$installed_version" = "$VERSION"
+          echo "Installed remote signed Demo App ${installed_version} from ${manifest_url}"
+
+          catalog_json="${smoke_root}/apphub-catalog.json"
+          curl --fail --location --silent --show-error \
+            "${RELEASE_BASE_URL}/apphub-catalog.json" \
+            --output "$catalog_json"
+
+          product_count="$(node -e "const c=require(process.argv[1]); console.log(c.products.length)" "$catalog_json")"
+          test "$product_count" -gt 0
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            list | tee "${smoke_root}/catalog-list.txt"
+
+          node -e "const c=require(process.argv[1]); for (const p of c.products) console.log([p.id,p.bundleName].join('\t'))" "$catalog_json" \
+            | while IFS=$'\t' read -r product_id bundle_name; do
+                test -n "$product_id"
+                test -n "$bundle_name"
+                grep -F "$product_id" "${smoke_root}/catalog-list.txt"
+                "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+                  --root "${smoke_root}/hub-state" \
+                  catalog-install "$product_id"
+                test -d "/Applications/${bundle_name}"
+                codesign --verify --strict --verbose=2 "/Applications/${bundle_name}"
+                xcrun stapler validate "/Applications/${bundle_name}"
+                spctl --assess --type execute --verbose=4 "/Applications/${bundle_name}"
+              done
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            update | tee "${smoke_root}/catalog-update.txt"
+          grep -F "no updates available" "${smoke_root}/catalog-update.txt"
+
+          echo "Installed ${product_count} remote signed catalog apps from ${RELEASE_BASE_URL}/apphub-catalog.json"
+
+      - name: Smoke install catalog app from published internet artifacts
+        if: inputs.publish_hub_update != 'true' && inputs.catalog_product_id != ''
+        run: |
+          set -euo pipefail
+
+          smoke_root="$(mktemp -d)"
+          apphub_zip="${smoke_root}/AppHub-remote-demo.app.zip"
+
+          curl --fail --location --silent --show-error \
+            "${RELEASE_BASE_URL}/AppHub-remote-demo.app.zip" \
+            --output "$apphub_zip"
+
+          ditto -x -k "$apphub_zip" "$smoke_root"
+          codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
+          xcrun stapler validate "${smoke_root}/AppHub.app"
+          spctl --assess --type execute --verbose=4 "${smoke_root}/AppHub.app"
+          codesign --verify --strict --verbose=2 \
+            "${smoke_root}/AppHub.app/Contents/Library/LaunchServices/com.tamber.AppHub.PrivilegedHelper"
+
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 60 \
+            sudo "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
+          codesign --verify --strict --verbose=2 \
+            /Library/PrivilegedHelperTools/com.tamber.AppHub.PrivilegedHelper
+
+          catalog_json="${smoke_root}/apphub-catalog.json"
+          curl --fail --location --silent --show-error \
+            "${RELEASE_BASE_URL}/apphub-catalog.json" \
+            --output "$catalog_json"
+
+          bundle_name="$(node -e "
+            const c=require(process.argv[1]);
+            const id=process.argv[2];
+            const version=process.argv[3];
+            const p=c.products.find((entry)=>entry.id===id);
+            if (!p) throw new Error('missing product '+id);
+            if (p.latestVersion !== version) throw new Error(id+' has version '+p.latestVersion+', expected '+version);
+            if (!p.artifacts?.[0]?.url?.includes(id+'-'+version+'.app.zip')) throw new Error('unexpected artifact url '+p.artifacts?.[0]?.url);
+            console.log(p.bundleName);
+          " "$catalog_json" "$APPHUB_CATALOG_PRODUCT_ID" "$VERSION")"
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            list | tee "${smoke_root}/catalog-list.txt"
+          grep -F "$APPHUB_CATALOG_PRODUCT_ID" "${smoke_root}/catalog-list.txt"
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            catalog-install "$APPHUB_CATALOG_PRODUCT_ID"
+          test -d "/Applications/${bundle_name}"
+          codesign --verify --strict --verbose=2 "/Applications/${bundle_name}"
+          xcrun stapler validate "/Applications/${bundle_name}"
+          spctl --assess --type execute --verbose=4 "/Applications/${bundle_name}"
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            catalog-update "$APPHUB_CATALOG_PRODUCT_ID" | tee "${smoke_root}/catalog-update.txt"
+          grep -E -i "no update(s)? available" "${smoke_root}/catalog-update.txt"
+
+          echo "Installed ${APPHUB_CATALOG_PRODUCT_ID} ${VERSION} from ${RELEASE_BASE_URL}/apphub-catalog.json"
+
+      - name: Smoke install AppHub from published internet artifacts
+        if: inputs.publish_hub_update == 'true'
+        run: |
+          set -euo pipefail
+
+          smoke_root="$(mktemp -d)"
+          manifest_url="${RELEASE_BASE_URL}/hub-manifest.json"
+          manifest_json="${smoke_root}/hub-manifest.json"
+          apphub_zip="${smoke_root}/AppHub-${VERSION}.app.zip"
+
+          curl --fail --location --silent --show-error \
+            "$manifest_url" \
+            --output "$manifest_json"
+          apphub_url="$(node -e "
+            const manifest = require(process.argv[1]);
+            if (!manifest.artifact?.url) throw new Error('hub manifest missing artifact url');
+            console.log(manifest.artifact.url);
+          " "$manifest_json")"
+
+          curl --fail --location --silent --show-error \
+            "$apphub_url" \
+            --output "$apphub_zip"
+
+          ditto -x -k "$apphub_zip" "$smoke_root"
+          codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
+          xcrun stapler validate "${smoke_root}/AppHub.app"
+          spctl --assess --type execute --verbose=4 "${smoke_root}/AppHub.app"
+          codesign --verify --strict --verbose=2 \
+            "${smoke_root}/AppHub.app/Contents/Library/LaunchServices/com.tamber.AppHub.PrivilegedHelper"
+
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 60 \
+            sudo "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
+          codesign --verify --strict --verbose=2 \
+            /Library/PrivilegedHelperTools/com.tamber.AppHub.PrivilegedHelper
+
+          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
+            --root "${smoke_root}/hub-state" \
+            remote-install \
+            --manifest-url "$manifest_url"
+
+          installed="/Applications/AppHub.app/Contents/MacOS/AppHub"
+          test -x "$installed"
+          installed_version="$("$installed" --version)"
+          test "$installed_version" = "$VERSION"
+          codesign --verify --strict --verbose=2 /Applications/AppHub.app
+          xcrun stapler validate /Applications/AppHub.app
+          spctl --assess --type execute --verbose=4 /Applications/AppHub.app
+          echo "Installed remote signed AppHub ${installed_version} from ${manifest_url}"

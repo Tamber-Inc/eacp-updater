@@ -1,0 +1,5 @@
+build*/
+dist/
+.DS_Store
+Demos/AppHub/web/node_modules/
+/.cache/clangd/index
