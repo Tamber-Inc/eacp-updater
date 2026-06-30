@@ -1,8 +1,8 @@
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
-import { capture, fileExists, requireEnv, requireMacOS, run } from './cli.mjs';
+import { capture, fileExists, repoRoot, requireEnv, requireMacOS, run } from './cli.mjs';
 
 export const remoteDemoKeychainPath = join(
   homedir(),
@@ -153,17 +153,85 @@ export function buildSignedComponentPkg({
   requireEnv(['APPLE_INSTALLER_SIGNING_IDENTITY'], 'Apple package signing');
   mkdirSync(dirname(output), { recursive: true });
   rmSync(output, { force: true });
-  run('productbuild', [
-    '--component',
-    component,
-    installLocation,
-    '--sign',
-    process.env.APPLE_INSTALLER_SIGNING_IDENTITY,
-    '--keychain',
-    keychainPath,
-    output,
-  ]);
+  const tempDir = mkdtempSync(join(tmpdir(), 'eacp-component-pkg-'));
+  const rootDir = join(tempDir, 'root');
+  const componentName = basename(component);
+  const stagedComponent = join(rootDir, componentName);
+  const componentPlist = join(tempDir, 'components.plist');
+  const unsignedComponentPkg = join(tempDir, 'component.pkg');
+  const bundleId = readBundlePlistValue(component, 'CFBundleIdentifier');
+  const bundleVersion =
+    readBundlePlistValue(component, 'CFBundleShortVersionString')
+    || readBundlePlistValue(component, 'CFBundleVersion')
+    || '1.0.0';
+
+  try {
+    mkdirSync(rootDir, { recursive: true });
+    cpSync(component, stagedComponent, {
+      recursive: true,
+      verbatimSymlinks: true,
+      preserveTimestamps: true,
+    });
+    writeFileSync(
+      componentPlist,
+      appBundleComponentPlist(componentName),
+    );
+
+    run('pkgbuild', [
+      '--identifier',
+      bundleId,
+      '--version',
+      bundleVersion,
+      '--root',
+      rootDir,
+      '--install-location',
+      installLocation,
+      '--component-plist',
+      componentPlist,
+      unsignedComponentPkg,
+    ]);
+
+    run('productbuild', [
+      '--package',
+      unsignedComponentPkg,
+      '--sign',
+      process.env.APPLE_INSTALLER_SIGNING_IDENTITY,
+      '--keychain',
+      keychainPath,
+      output,
+    ]);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
   verifyPkgSignature(output);
+}
+
+function readBundlePlistValue(bundle, key) {
+  const result = capture('/usr/libexec/PlistBuddy', [
+    '-c',
+    `Print ${key}`,
+    join(bundle, 'Contents', 'Info.plist'),
+  ], { check: false });
+  return result.status === 0 ? result.stdout.trim() : '';
+}
+
+function appBundleComponentPlist(rootRelativeBundlePath) {
+  return readFileSync(
+    join(repoRoot, 'Scripts', 'resources', 'app-bundle-component.plist.in'),
+    'utf8',
+  ).replaceAll(
+    '@ROOT_RELATIVE_BUNDLE_PATH@',
+    escapePlistString(rootRelativeBundlePath),
+  );
+}
+
+function escapePlistString(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
 }
 
 export function notarizeAndStaplePkgs(pkgs) {
