@@ -9,7 +9,7 @@ This repo contains:
 - `eacp-hub`: channel/catalog loading and product catalog helpers for hub-style update apps.
 - User/demo code in `Demos/`.
 - `Demos/AppHub`: a sample hub app.
-- `Demos/RealUpdateDemo`: a sample product app that updates from a hub.
+- `Demos/HelloWorldDemo`: a sample product app that updates from a hub.
 - Library tests in `Tests/Updater` and `Tests/Hub`.
 - Demo AppHub tests in `Tests/Demos/AppHub`.
 - Update packaging, publishing, signing, promotion, and local demo scripts.

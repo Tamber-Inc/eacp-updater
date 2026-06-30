@@ -32,10 +32,10 @@ const outDir = env('OUT_DIR', join(repoRoot, 'dist', 'remote-demo-app-update'));
 const buildDir = env('BUILD_DIR', join(repoRoot, `build-remote-demo-app-update-${version}`));
 const macOSDeploymentTarget = env('EACP_MACOS_DEPLOYMENT_TARGET', '11.0');
 
-const demoAppName = 'Tamber Local Update Demo.app';
-const demoBinaryName = 'Tamber Local Update Demo';
-const demoZip = `TamberLocalUpdateDemo-${version}.app.zip`;
-const productId = 'music.tamber.RealUpdateDemo';
+const demoAppName = 'Tamber Hello World Demo.app';
+const demoBinaryName = 'Tamber Hello World Demo';
+const demoZip = `TamberHelloWorldDemo-${version}.app.zip`;
+const productId = 'music.tamber.HelloWorldDemo';
 
 requireMacOS('Remote demo app update publishing');
 
@@ -50,13 +50,13 @@ run('cmake', [
   buildDir,
   '-DCMAKE_BUILD_TYPE=Release',
   `-DCMAKE_OSX_DEPLOYMENT_TARGET=${macOSDeploymentTarget}`,
-  `-DEACP_REAL_UPDATE_DEMO_VERSION=${version}`,
+  `-DEACP_HELLO_WORLD_DEMO_VERSION=${version}`,
 ]);
 
 log(`Build Demo App ${version}`);
-run('cmake', ['--build', buildDir, '--target', 'RealUpdateDemo']);
+run('cmake', ['--build', buildDir, '--target', 'HelloWorldDemo']);
 
-const demoApp = join(buildDir, 'Demos', 'RealUpdateDemo', demoAppName);
+const demoApp = join(buildDir, 'Demos', 'HelloWorldDemo', demoAppName);
 
 log(`Sign Demo App ${version}`);
 signPath(demoApp);
@@ -87,7 +87,7 @@ verifyGatekeeperApp(packagedDemoApp);
 const demoSha = sha256File(join(outDir, demoZip));
 const manifest = {
   productId,
-  name: 'Tamber Local Update Demo',
+  name: 'Tamber Hello World Demo',
   version,
   bundleName: demoAppName,
   artifact: {

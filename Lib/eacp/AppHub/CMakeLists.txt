@@ -4,7 +4,9 @@ target_sources(eacp-apphub PRIVATE
         AppHubPlatform.h
         AppHubTypes.h
         LaunchGuardIpc.cpp
-        LaunchGuardIpc.h)
+        LaunchGuardIpc.h
+        LaunchPolicy.cpp
+        LaunchPolicy.h)
 
 if (APPLE)
     target_sources(eacp-apphub PRIVATE

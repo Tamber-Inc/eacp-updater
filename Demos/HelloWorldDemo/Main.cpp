@@ -5,12 +5,12 @@
 #include <string>
 #include <string_view>
 
-#ifndef EACP_REAL_UPDATE_DEMO_VERSION
-#define EACP_REAL_UPDATE_DEMO_VERSION "0.0.0"
+#ifndef EACP_HELLO_WORLD_DEMO_VERSION
+#define EACP_HELLO_WORLD_DEMO_VERSION "0.0.0"
 #endif
 
-#ifndef EACP_REAL_UPDATE_DEMO_PRODUCT_ID
-#define EACP_REAL_UPDATE_DEMO_PRODUCT_ID "music.tamber.RealUpdateDemo"
+#ifndef EACP_HELLO_WORLD_DEMO_PRODUCT_ID
+#define EACP_HELLO_WORLD_DEMO_PRODUCT_ID "music.tamber.HelloWorldDemo"
 #endif
 
 namespace AppHub = eacp::AppHub;
@@ -18,12 +18,12 @@ namespace Graphics = eacp::Graphics;
 
 namespace
 {
-constexpr std::string_view productId = EACP_REAL_UPDATE_DEMO_PRODUCT_ID;
+constexpr std::string_view productId = EACP_HELLO_WORLD_DEMO_PRODUCT_ID;
 
 AppHub::LaunchGuardContext launchGuardContext()
 {
     return {.productId = std::string(productId),
-            .version = EACP_REAL_UPDATE_DEMO_VERSION,
+            .version = EACP_HELLO_WORLD_DEMO_VERSION,
             .channel = "stable"};
 }
 
@@ -47,7 +47,7 @@ struct DemoView final : Graphics::View
         subtitle->setColor({0.60f, 0.74f, 0.78f});
         guard->setColor({0.46f, 0.78f, 0.62f});
 
-        title->setText("hello world " EACP_REAL_UPDATE_DEMO_VERSION);
+        title->setText("hello world " EACP_HELLO_WORLD_DEMO_VERSION);
         subtitle->setText(std::string("product: ") + std::string(productId));
         guard->setText(std::move(launchStatus));
 
@@ -110,7 +110,7 @@ int main(int argc, char* argv[])
 {
     if (argc > 1 && std::string(argv[1]) == "--version")
     {
-        std::cout << EACP_REAL_UPDATE_DEMO_VERSION << "\n";
+        std::cout << EACP_HELLO_WORLD_DEMO_VERSION << "\n";
         return 0;
     }
 

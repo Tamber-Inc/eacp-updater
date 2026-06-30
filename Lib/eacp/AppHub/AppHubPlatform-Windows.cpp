@@ -46,12 +46,12 @@ fs::path installedAppBundlePath(std::string_view bundleName)
 
 fs::path installedDemoAppBundlePath()
 {
-    return installedAppBundlePath("Tamber Local Update Demo");
+    return installedAppBundlePath("Tamber Hello World Demo");
 }
 
 fs::path installedDemoAppExecutablePath()
 {
-    return installedDemoAppBundlePath() / "Tamber Local Update Demo.exe";
+    return installedDemoAppBundlePath() / "Tamber Hello World Demo.exe";
 }
 
 fs::path installedHubAppBundlePath()

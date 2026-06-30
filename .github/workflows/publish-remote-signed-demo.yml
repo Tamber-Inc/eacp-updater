@@ -182,12 +182,12 @@ jobs:
             --output "$app_zip"
 
           ditto -x -k "$app_zip" "$smoke_root"
-          app="${smoke_root}/Tamber Local Update Demo.app"
+          app="${smoke_root}/Tamber Hello World Demo.app"
           codesign --verify --strict --verbose=2 "$app"
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=4 "$app"
 
-          app_version="$("${app}/Contents/MacOS/Tamber Local Update Demo" --version)"
+          app_version="$("${app}/Contents/MacOS/Tamber Hello World Demo" --version)"
           test "$app_version" = "$VERSION"
           echo "Verified remote signed Demo App ${app_version} from ${manifest_url}"
 

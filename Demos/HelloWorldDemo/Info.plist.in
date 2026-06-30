@@ -5,19 +5,19 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleExecutable</key>
-    <string>Tamber Local Update Demo</string>
+    <string>Tamber Hello World Demo</string>
     <key>CFBundleIdentifier</key>
-    <string>@EACP_REAL_UPDATE_DEMO_BUNDLE_ID@</string>
+    <string>@EACP_HELLO_WORLD_DEMO_BUNDLE_ID@</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Tamber Local Update Demo</string>
+    <string>Tamber Hello World Demo</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>@EACP_REAL_UPDATE_DEMO_VERSION@</string>
+    <string>@EACP_HELLO_WORLD_DEMO_VERSION@</string>
     <key>CFBundleVersion</key>
-    <string>@EACP_REAL_UPDATE_DEMO_VERSION@</string>
+    <string>@EACP_HELLO_WORLD_DEMO_VERSION@</string>
     <key>LSMinimumSystemVersion</key>
     <string>10.13</string>
     <key>NSHighResolutionCapable</key>

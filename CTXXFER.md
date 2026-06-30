@@ -99,9 +99,9 @@ Demo adapter:
 
 ## Demo App Networking
 
-`Demos/RealUpdateDemo/Main.cpp` was changed to use `eacp/Network/HTTP/Http.h` instead of shelling out to `/usr/bin/curl`.
+`Demos/HelloWorldDemo/Main.cpp` was changed to use `eacp/Network/HTTP/Http.h` instead of shelling out to `/usr/bin/curl`.
 
-`Demos/RealUpdateDemo/CMakeLists.txt` links `eacp-network`.
+`Demos/HelloWorldDemo/CMakeLists.txt` links `eacp-network`.
 
 ## AppHub Installer Package Work
 
@@ -226,7 +226,7 @@ Result: passed.
 Build:
 
 ```sh
-cmake --build build-apps-check --target AppHub RealUpdateDemo
+cmake --build build-apps-check --target AppHub HelloWorldDemo
 ```
 
 Result: passed.

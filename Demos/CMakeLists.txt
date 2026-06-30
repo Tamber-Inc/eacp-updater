@@ -5,5 +5,5 @@ if ((APPLE OR WIN32) AND EACP_BUILD_GRAPHICS AND EACP_BUILD_WEBVIEW)
 endif ()
 
 if (APPLE AND NOT IOS AND EACP_BUILD_GRAPHICS)
-    add_subdirectory(RealUpdateDemo)
+    add_subdirectory(HelloWorldDemo)
 endif ()

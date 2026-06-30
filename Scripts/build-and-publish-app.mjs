@@ -26,6 +26,8 @@ if (appName === 'apphub' || appName === 'hub') {
   });
 } else if (
   appName === 'demo'
+  || appName === 'helloworlddemo'
+  || appName === 'hello-world-demo'
   || appName === 'realupdatedemo'
   || appName === 'real-update-demo'
 ) {
@@ -35,6 +37,6 @@ if (appName === 'apphub' || appName === 'hub') {
   });
 } else {
   throw new Error(
-    'Unknown app. Expected one of: apphub, demo',
+    'Unknown app. Expected one of: apphub, demo, hello-world-demo',
   );
 }
