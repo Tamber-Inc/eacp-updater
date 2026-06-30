@@ -115,6 +115,8 @@ jobs:
               'item',
               'get',
               item.id,
+              '--vault',
+              'Tamber-Production',
               '--format',
               'json',
               '--reveal',
