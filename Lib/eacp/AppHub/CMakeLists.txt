@@ -4,7 +4,7 @@ target_sources(eacp-apphub PRIVATE
         AppHubPlatform.h
         AppHubTypes.h)
 
-if (APPLE)
+if (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     target_sources(eacp-apphub PRIVATE
             AppHubPlatform-macOS.mm
             ../Updater/PrivilegedHelper/PrivilegedHelper-macOS.mm)
