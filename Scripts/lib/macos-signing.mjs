@@ -272,19 +272,6 @@ export function verifyPkgSignature(path) {
   run('pkgutil', ['--check-signature', path]);
 }
 
-export function verifyAppHubPrivilegedHelper(
-  appBundle,
-  helperLabel = 'com.tamber.AppHub.PrivilegedHelper',
-) {
-  verifyCodeSignature(join(
-    appBundle,
-    'Contents',
-    'Library',
-    'LaunchServices',
-    helperLabel,
-  ));
-}
-
 export function verifyMachODeploymentTargetAtMost(path, maximumVersion) {
   const result = capture('otool', ['-l', path]);
   const match = result.stdout.match(/^\s*minos\s+([0-9]+(?:\.[0-9]+)*)$/m);
@@ -297,21 +284,6 @@ export function verifyMachODeploymentTargetAtMost(path, maximumVersion) {
       `${basename(path)} targets macOS ${match[1]}, expected ${maximumVersion} or older`,
     );
   }
-}
-
-export function verifyAppHubDeploymentTarget(
-  appBundle,
-  maximumVersion,
-  helperLabel = 'com.tamber.AppHub.PrivilegedHelper',
-) {
-  verifyMachODeploymentTargetAtMost(
-    join(appBundle, 'Contents', 'MacOS', 'AppHub'),
-    maximumVersion,
-  );
-  verifyMachODeploymentTargetAtMost(
-    join(appBundle, 'Contents', 'Library', 'LaunchServices', helperLabel),
-    maximumVersion,
-  );
 }
 
 export function adHocSignPath(path) {

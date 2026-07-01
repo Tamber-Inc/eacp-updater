@@ -1,49 +1,56 @@
 #!/usr/bin/env node
 
-import { basename, extname, join } from 'node:path';
+import { extname, join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 import {
   capture,
-  env,
   fileExists,
   readText,
   run,
   sha256File,
   writeJson,
 } from './lib/cli.mjs';
+import {
+  catalogUrl,
+  channelArtifactObject,
+  channelCatalogObject,
+  configuredChannel,
+  configuredProduct,
+  configuredVersion,
+  emptyChannelIndex,
+  loadPublishConfig,
+  objectPublicUrl,
+  objectStorageUrl,
+  upsertChannel,
+} from './lib/apphub-publish-config.mjs';
 
-const [filePath, versionArg, channelArg] = process.argv.slice(2);
+const { positionals, options } = parseArgs(process.argv.slice(2));
+const [filePath, versionArg, channelArg] = positionals;
 
 if (!filePath || !versionArg) {
-  throw new Error('Usage: publish-artifact.mjs <filepath> <version> [channel]');
+  throw new Error('Usage: publish-artifact.mjs <filepath> <version> [channel] [--product <id>]');
 }
 if (!fileExists(filePath)) {
   throw new Error(`Artifact does not exist: ${filePath}`);
 }
 
-const version = versionArg;
-const channel = normalizeChannel(channelArg ?? env('APPHUB_CHANNEL', env('CHANNEL', 'stable')));
-const product = productFor(filePath);
-const storageRoot = stripTrailingSlash(
-  env('APPHUB_STORAGE_ROOT', 'gs://tamber-artifacts/jamie-updater-demo'),
-);
-const publicRoot = stripTrailingSlash(
-  env('APPHUB_PUBLIC_ROOT', 'https://storage.googleapis.com/tamber-artifacts/jamie-updater-demo'),
-);
-const channelPath = safeChannelPath(channel);
+const config = loadPublishConfig(options.config);
+const version = configuredVersion(versionArg);
+const channel = configuredChannel(config, channelArg);
+const product = configuredProduct(config, options.product, filePath);
 const extension = extname(filePath) || '.blob';
 const artifactName = `${product.id}-${version}${extension}`;
-const artifactObject = `channels/${channelPath}/artifacts/${artifactName}`;
-const catalogObject = `channels/${channelPath}/apphub-catalog.json`;
-const artifactUrl = `${publicRoot}/${artifactObject}`;
-const catalogUrl = `${publicRoot}/${catalogObject}`;
+const artifactObject = channelArtifactObject(channel, artifactName);
+const catalogObject = channelCatalogObject(channel);
+const artifactUrl = objectPublicUrl(config, artifactObject);
+const currentCatalogUrl = catalogUrl(config, channel);
 const workDir = mkdtempSync(join(tmpdir(), 'eacp-publish-artifact-'));
 const catalogPath = join(workDir, 'apphub-catalog.json');
 const indexPath = join(workDir, 'index.json');
 
-downloadOrDefault(`${storageRoot}/${catalogObject}`, catalogPath, {
+downloadOrDefault(objectStorageUrl(config, catalogObject), catalogPath, {
   catalogVersion: Number.parseInt(version.split('.')[0], 10) || 1,
   products: [],
   signature: '',
@@ -54,10 +61,10 @@ const nextCatalog = replaceCatalogProduct(catalog, {
   id: product.id,
   name: product.name,
   kind: product.kind,
-  bundleName: '',
+  bundleName: product.bundleName,
   channel,
   latestVersion: version,
-  dependencies: [],
+  dependencies: product.dependencies,
   artifacts: [
     {
       platform: 'MacOS',
@@ -74,34 +81,22 @@ nextCatalog.catalogVersion = Math.max(
 );
 writeJson(catalogPath, nextCatalog);
 
-downloadOrDefault(`${storageRoot}/index.json`, indexPath, {
-  defaultChannel: channel,
-  channels: [],
-});
+downloadOrDefault(objectStorageUrl(config, 'index.json'), indexPath, emptyChannelIndex(config, channel));
 const index = JSON.parse(readText(indexPath));
-const channels = (index.channels ?? []).filter((entry) => entry.id !== channel);
-channels.push({
-  id: channel,
-  name: titleForChannel(channel),
-  catalogUrl,
-  isDefault: (index.defaultChannel || channel) === channel,
-});
-index.defaultChannel = index.defaultChannel || channel;
-index.channels = channels.sort((left, right) => left.id.localeCompare(right.id));
-writeJson(indexPath, index);
+writeJson(indexPath, upsertChannel(index, config, channel));
 
 run('gcloud', [
   'storage',
   'cp',
   filePath,
-  `${storageRoot}/${artifactObject}`,
+  objectStorageUrl(config, artifactObject),
   '--cache-control=no-cache,max-age=0',
 ]);
 run('gcloud', [
   'storage',
   'cp',
   catalogPath,
-  `${storageRoot}/${catalogObject}`,
+  objectStorageUrl(config, catalogObject),
   '--content-type=application/json',
   '--cache-control=no-cache,max-age=0',
 ]);
@@ -109,24 +104,12 @@ run('gcloud', [
   'storage',
   'cp',
   indexPath,
-  `${storageRoot}/index.json`,
+  objectStorageUrl(config, 'index.json'),
   '--content-type=application/json',
   '--cache-control=no-cache,max-age=0',
 ]);
 
-console.log(JSON.stringify({ product: nextCatalog.products.find((entry) => entry.id === product.id), catalogUrl }, null, 2));
-
-function productFor(path) {
-  const id = env('APPHUB_PRODUCT_ID', '').trim();
-  if (!id) {
-    throw new Error('APPHUB_PRODUCT_ID is required to publish a generic artifact.');
-  }
-  return {
-    id,
-    name: env('APPHUB_PRODUCT_NAME', id),
-    kind: env('APPHUB_PRODUCT_KIND', inferKind(path)),
-  };
-}
+console.log(JSON.stringify({ product: nextCatalog.products.find((entry) => entry.id === product.id), catalogUrl: currentCatalogUrl }, null, 2));
 
 function replaceCatalogProduct(catalog, product) {
   return {
@@ -136,10 +119,6 @@ function replaceCatalogProduct(catalog, product) {
       product,
     ].sort((left, right) => left.id.localeCompare(right.id)),
   };
-}
-
-function inferKind(path) {
-  return extname(path).toLowerCase() === '.app' ? 'App' : 'Blob';
 }
 
 function downloadOrDefault(source, destination, fallback) {
@@ -152,25 +131,19 @@ function downloadOrDefault(source, destination, fallback) {
   if (result.status !== 0) writeJson(destination, fallback);
 }
 
-function normalizeChannel(channel) {
-  const trimmed = String(channel ?? '').trim();
-  return trimmed || 'stable';
-}
-
-function safeChannelPath(channel) {
-  return normalizeChannel(channel)
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'stable';
-}
-
-function stripTrailingSlash(value) {
-  return value.replace(/\/+$/, '');
-}
-
-function titleForChannel(channel) {
-  return channel
-    .split(/[/-]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ') || channel;
+function parseArgs(args) {
+  const positionals = [];
+  const options = {};
+  for (let i = 0; i < args.length; ++i) {
+    if (args[i] === '--product') {
+      options.product = args[++i];
+      continue;
+    }
+    if (args[i] === '--config') {
+      options.config = args[++i];
+      continue;
+    }
+    positionals.push(args[i]);
+  }
+  return { positionals, options };
 }

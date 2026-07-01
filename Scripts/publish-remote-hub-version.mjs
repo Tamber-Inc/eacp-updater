@@ -13,39 +13,54 @@ import {
   writeJson,
 } from './lib/cli.mjs';
 import {
+  channelArtifactObject,
+  configuredChannel,
+  configuredRelease,
+  configuredVersion,
+  loadPublishConfig,
+  objectPublicUrl,
+  objectStorageUrl,
+  requireHubConfig,
+  templateName,
+} from './lib/apphub-publish-config.mjs';
+import {
   buildSignedComponentPkg,
   ensureTamberSigningIdentity,
   notarizeAndStapleApps,
   notarizeAndStaplePkgs,
   signPath,
   validateStapledApp,
-  verifyAppHubDeploymentTarget,
-  verifyAppHubPrivilegedHelper,
   verifyCodeSignature,
   verifyGatekeeperApp,
+  verifyMachODeploymentTargetAtMost,
 } from './lib/macos-signing.mjs';
 
-const version = env('VERSION', '2.0.0');
-const releaseTag = env('RELEASE_TAG', 'remote-demo-v1');
-const releaseBaseUrl = env(
-  'RELEASE_BASE_URL',
-  `https://github.com/Tamber-Inc/eacp-updater/releases/download/${releaseTag}`,
+const { options } = parseArgs(process.argv.slice(2));
+const config = loadPublishConfig(options.config);
+const hub = requireHubConfig(config);
+const version = configuredVersion();
+const channel = configuredChannel(config);
+const release = configuredRelease(config);
+const outDir = envString('OUT_DIR', join(repoRoot, 'dist', 'remote-hub-update'));
+const buildDir = envString('BUILD_DIR', join(repoRoot, `build-remote-hub-update-${version}`));
+const macOSDeploymentTarget = envString(
+  'EACP_MACOS_DEPLOYMENT_TARGET',
+  requiredString(config, 'macOSDeploymentTarget', 'macOSDeploymentTarget'),
 );
-const outDir = env('OUT_DIR', join(repoRoot, 'dist', 'remote-hub-update'));
-const buildDir = env('BUILD_DIR', join(repoRoot, `build-remote-hub-update-${version}`));
-const macOSDeploymentTarget = env('EACP_MACOS_DEPLOYMENT_TARGET', '11.0');
-const channel = normalizeChannel(env('APPHUB_CHANNEL', env('CHANNEL', 'stable')));
-const storageRoot = stripTrailingSlash(env('APPHUB_STORAGE_ROOT', 'gs://tamber-artifacts/jamie-updater-demo'));
-const publicRoot = stripTrailingSlash(env('APPHUB_PUBLIC_ROOT', 'https://storage.googleapis.com/tamber-artifacts/jamie-updater-demo'));
 
-const appHubAppName = 'AppHub.app';
-const appHubBinaryName = 'AppHub';
-const appHubZip = `AppHub-${version}.app.zip`;
-const appHubPkg = `AppHub-${version}.pkg`;
-const productId = 'com.tamber.AppHub';
-const channelPath = safeChannelPath(channel);
-const installerManifestName = 'hub-installer.json';
-const appHubPkgObject = `channels/${channelPath}/artifacts/${appHubPkg}`;
+const appHubAppName = hub.bundleName;
+const appHubBinaryName = requiredString(hub, 'binaryName', 'hub.binaryName');
+const appHubZip = templateName(requiredString(hub, 'zipNameTemplate', 'hub.zipNameTemplate'), {
+  name: hub.name,
+  productId: hub.productId,
+  version,
+});
+const appHubPkg = templateName(hub.packageNameTemplate, {
+  name: hub.name,
+  productId: hub.productId,
+  version,
+});
+const appHubPkgObject = channelArtifactObject(channel, appHubPkg);
 
 requireMacOS('Remote AppHub update publishing');
 
@@ -60,29 +75,28 @@ run('cmake', [
   buildDir,
   '-DCMAKE_BUILD_TYPE=Release',
   `-DCMAKE_OSX_DEPLOYMENT_TARGET=${macOSDeploymentTarget}`,
-  `-DEACP_APPHUB_VERSION=${version}`,
-  '-DEACP_APPHUB_DISABLE_DEV_CATALOG=ON',
-  `-DEACP_APPHUB_DEMO_MANIFEST_URL=${releaseBaseUrl}/manifest.json`,
-  `-DEACP_APPHUB_MANIFEST_URL=${releaseBaseUrl}/hub-manifest.json`,
+  cmakeDefine(requiredString(hub, 'versionDefine', 'hub.versionDefine'), version),
+  ...optionalCmakeDefines(hub, release.baseUrl),
 ]);
 
 log(`Build AppHub ${version}`);
-run('cmake', ['--build', buildDir, '--target', 'AppHub']);
+run('cmake', ['--build', buildDir, '--target', requiredString(hub, 'cmakeTarget', 'hub.cmakeTarget')]);
 
-const appHubApp = join(buildDir, 'Demos', 'AppHub', appHubAppName);
-const appHubHelper = join(
-  appHubApp,
-  'Contents',
-  'Library',
-  'LaunchServices',
-  'com.tamber.AppHub.PrivilegedHelper',
-);
+const appHubApp = join(buildDir, ...pathParts(hub.buildRelativePath, 'hub.buildRelativePath'));
+const appHubHelper = hub.helperRelativePath
+  ? join(appHubApp, ...pathParts(hub.helperRelativePath, 'hub.helperRelativePath'))
+  : '';
 
 log(`Sign AppHub ${version}`);
-signPath(appHubHelper);
+if (appHubHelper) signPath(appHubHelper);
 signPath(appHubApp);
-verifyAppHubDeploymentTarget(appHubApp, macOSDeploymentTarget);
-verifyAppHubPrivilegedHelper(appHubApp);
+verifyMachODeploymentTargetAtMost(
+  join(appHubApp, 'Contents', 'MacOS', appHubBinaryName),
+  macOSDeploymentTarget,
+);
+if (appHubHelper) {
+  verifyMachODeploymentTargetAtMost(appHubHelper, macOSDeploymentTarget);
+}
 
 log(`Notarize and staple AppHub ${version}`);
 notarizeAndStapleApps([appHubApp]);
@@ -110,32 +124,44 @@ cleanDir(packagedVerifyDir);
 run('ditto', ['-x', '-k', join(outDir, appHubZip), packagedVerifyDir]);
 const packagedAppHub = join(packagedVerifyDir, appHubAppName);
 verifyCodeSignature(packagedAppHub);
-verifyAppHubDeploymentTarget(packagedAppHub, macOSDeploymentTarget);
-verifyAppHubPrivilegedHelper(packagedAppHub);
+verifyMachODeploymentTargetAtMost(
+  join(packagedAppHub, 'Contents', 'MacOS', appHubBinaryName),
+  macOSDeploymentTarget,
+);
+if (hub.helperRelativePath) {
+  const packagedHelper = join(
+    packagedAppHub,
+    ...pathParts(hub.helperRelativePath, 'hub.helperRelativePath'),
+  );
+  verifyCodeSignature(packagedHelper);
+  verifyMachODeploymentTargetAtMost(packagedHelper, macOSDeploymentTarget);
+}
 validateStapledApp(packagedAppHub);
 verifyGatekeeperApp(packagedAppHub);
 
 const appHubSha = sha256File(join(outDir, appHubZip));
 const appHubPkgSha = sha256File(appHubPkgPath);
 const manifest = {
-  productId,
+  productId: hub.productId,
   name: appHubBinaryName,
   version,
   bundleName: appHubAppName,
   artifact: {
-    url: `${releaseBaseUrl}/${appHubZip}`,
+    url: `${release.baseUrl}/${appHubZip}`,
     sha256: appHubSha,
   },
 };
-writeJson(join(outDir, 'hub-manifest.json'), manifest);
+const hubManifestName = requiredString(hub, 'manifestName', 'hub.manifestName');
+const installerManifestName = hub.installerManifestName || 'hub-installer.json';
+writeJson(join(outDir, hubManifestName), manifest);
 
 const installerManifest = {
-  productId,
+  productId: hub.productId,
   name: appHubBinaryName,
   version,
   bundleName: appHubAppName,
   package: {
-    url: `${publicRoot}/${appHubPkgObject}`,
+    url: objectPublicUrl(config, appHubPkgObject),
     sha256: appHubPkgSha,
   },
 };
@@ -145,13 +171,13 @@ log('Update release Hub manifest and app artifact');
 run('gh', [
   'release',
   'upload',
-  releaseTag,
+  release.tag,
   join(outDir, appHubZip),
   appHubPkgPath,
-  join(outDir, 'hub-manifest.json'),
+  join(outDir, hubManifestName),
   join(outDir, installerManifestName),
   '--repo',
-  'Tamber-Inc/eacp-updater',
+  release.repo,
   '--clobber',
 ]);
 
@@ -160,29 +186,74 @@ run('gcloud', [
   'storage',
   'cp',
   appHubPkgPath,
-  `${storageRoot}/${appHubPkgObject}`,
+  objectStorageUrl(config, appHubPkgObject),
   '--cache-control=no-cache,max-age=0',
 ]);
 
 log(`Update ${channel} AppHub channel metadata`);
-run(process.execPath, [
+const updateChannelArgs = [
   'Scripts/update-apphub-channel.mjs',
   channel,
   version,
-]);
+];
+if (options.config) updateChannelArgs.push('--config', options.config);
+run(process.execPath, updateChannelArgs);
 
 log(`Published AppHub ${version}`);
 console.log(JSON.stringify(manifest, null, 2));
 console.log(JSON.stringify(installerManifest, null, 2));
 
-function normalizeChannel(value) {
-  return value.trim() || 'stable';
+function parseArgs(args) {
+  const options = {};
+  for (let i = 0; i < args.length; ++i) {
+    if (args[i] === '--config') {
+      options.config = args[++i];
+    }
+  }
+  return { options };
 }
 
-function safeChannelPath(value) {
-  return normalizeChannel(value).replace(/[^A-Za-z0-9._-]/g, '-');
+function cmakeDefine(name, value) {
+  return `-D${name}=${value}`;
 }
 
-function stripTrailingSlash(value) {
-  return value.replace(/\/+$/, '');
+function optionalCmakeDefines(hubConfig, baseUrl) {
+  const out = [];
+  if (hubConfig.disableDevCatalogDefine)
+    out.push(cmakeDefine(hubConfig.disableDevCatalogDefine, 'ON'));
+  if (hubConfig.demoManifestUrlDefine)
+    out.push(cmakeDefine(
+      hubConfig.demoManifestUrlDefine,
+      `${baseUrl}/${requiredString(requiredObject(config, 'demoApp'), 'manifestName', 'demoApp.manifestName')}`,
+    ));
+  if (hubConfig.manifestUrlDefine)
+    out.push(cmakeDefine(hubConfig.manifestUrlDefine, `${baseUrl}/${requiredString(hubConfig, 'manifestName', 'hub.manifestName')}`));
+  return out;
+}
+
+function pathParts(value, label) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim()) return value.split('/');
+  throw new Error(`Publish config requires path: ${label}`);
+}
+
+function requiredObject(parent, key, label = key) {
+  const value = parent?.[key];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Publish config requires object: ${label}`);
+  }
+  return value;
+}
+
+function requiredString(parent, key, label = key) {
+  const value = parent?.[key];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`Publish config requires string: ${label}`);
+  }
+  return value.trim();
+}
+
+function envString(name, fallback) {
+  const value = env(name);
+  return value && value.trim() ? value : fallback;
 }

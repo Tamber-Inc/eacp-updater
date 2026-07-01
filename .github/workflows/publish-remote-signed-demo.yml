@@ -9,8 +9,8 @@ on:
         default: 1.0.0
       release_tag:
         description: GitHub Release tag for the signed remote demo.
-        required: true
-        default: remote-demo-v1
+        required: false
+        default: ''
       channel:
         description: AppHub catalog channel to publish, e.g. stable, develop, jp/feat/foo. Non-stable maps to apphub-channel-<safe-channel>.
         required: false
@@ -29,9 +29,9 @@ jobs:
     runs-on: macos-15-xlarge
 
     env:
+      APPHUB_PUBLISH_CONFIG: Demos/AppHub/apphub-publish.demo.json
       VERSION: ${{ inputs.version }}
       RELEASE_TAG: ${{ inputs.release_tag }}
-      RELEASE_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
       APPHUB_CHANNEL: ${{ inputs.channel }}
       EACP_MACOS_DEPLOYMENT_TARGET: '11.0'
       OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
@@ -47,99 +47,7 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
 
       - name: Authenticate gcloud
-        run: |
-          set -euo pipefail
-
-          op item list \
-            --vault Tamber-Production \
-            --format json > "${RUNNER_TEMP}/op-items.json"
-
-          OP_ITEM_LIST_JSON="${RUNNER_TEMP}/op-items.json" \
-          GOOGLE_APPLICATION_CREDENTIALS="${RUNNER_TEMP}/gcloud-service-account.json" \
-          node <<'NODE'
-          const fs = require('node:fs');
-          const { execFileSync } = require('node:child_process');
-
-          function normalize(value) {
-            return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-          }
-
-          function parseCredentials(value) {
-            const raw = String(value ?? '').trim();
-            if (!raw) return undefined;
-
-            for (const candidate of [
-              raw,
-              Buffer.from(raw, 'base64').toString('utf8'),
-            ]) {
-              try {
-                const json = JSON.parse(candidate);
-                if (json.type === 'service_account'
-                    && json.client_email
-                    && json.private_key) {
-                  return JSON.stringify(json, null, 2);
-                }
-              } catch {
-                // Keep trying candidate encodings.
-              }
-            }
-
-            return undefined;
-          }
-
-          function isPreferred(value) {
-            const normalized = normalize(value);
-            return normalized.includes('gcloud')
-              || normalized.includes('googlecloud')
-              || normalized.includes('gcp')
-              || normalized.includes('serviceaccount')
-              || normalized.includes('credentials');
-          }
-
-          function itemJson(item) {
-            return JSON.parse(execFileSync('op', [
-              'item',
-              'get',
-              item.id,
-              '--vault',
-              'Tamber-Production',
-              '--format',
-              'json',
-              '--reveal',
-            ], { encoding: 'utf8' }));
-          }
-
-          const items = JSON.parse(fs.readFileSync(process.env.OP_ITEM_LIST_JSON, 'utf8'));
-          const preferredItems = items.filter((item) => isPreferred(item.title));
-          const orderedItems = [...preferredItems, ...items.filter((item) => !preferredItems.includes(item))];
-
-          for (const itemSummary of orderedItems) {
-            const item = itemJson(itemSummary);
-            const fields = Array.isArray(item.fields) ? item.fields : [];
-            const preferredFields = fields.filter((field) => isPreferred(field.label));
-            const orderedFields = [
-              ...preferredFields,
-              ...fields.filter((field) => !preferredFields.includes(field)),
-            ];
-
-            for (const field of orderedFields) {
-              const credentials = parseCredentials(field.value);
-              if (credentials) {
-                fs.writeFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, credentials, {
-                  mode: 0o600,
-                });
-                process.exit(0);
-              }
-            }
-          }
-
-          throw new Error('No Google Cloud service account JSON found in the Tamber-Production vault');
-          NODE
-
-          gcloud auth activate-service-account \
-            --key-file="${RUNNER_TEMP}/gcloud-service-account.json"
-          gcloud auth list --filter=status:ACTIVE --format='value(account)'
-          gcloud storage ls gs://tamber-artifacts >/dev/null
+        run: node Scripts/ci/authenticate-gcloud-from-1password.mjs
 
       - name: Build and upload signed Demo App update
         if: inputs.publish_hub_update != 'true'
@@ -159,83 +67,8 @@ jobs:
 
       - name: Smoke install Demo App from published internet artifacts
         if: inputs.publish_hub_update != 'true'
-        run: |
-          set -euo pipefail
-
-          smoke_root="$(mktemp -d)"
-          manifest_url="${RELEASE_BASE_URL}/manifest.json"
-          manifest_json="${smoke_root}/manifest.json"
-          app_zip="${smoke_root}/demo.app.zip"
-
-          curl --fail --location --silent --show-error \
-            "$manifest_url" \
-            --output "$manifest_json"
-          app_url="$(node -e "
-            const manifest = require(process.argv[1]);
-            if (manifest.version !== process.argv[2]) throw new Error('unexpected version '+manifest.version);
-            if (!manifest.artifact?.url) throw new Error('manifest missing artifact url');
-            console.log(manifest.artifact.url);
-          " "$manifest_json" "$VERSION")"
-
-          curl --fail --location --silent --show-error \
-            "$app_url" \
-            --output "$app_zip"
-
-          ditto -x -k "$app_zip" "$smoke_root"
-          app="${smoke_root}/Tamber Local Update Demo.app"
-          codesign --verify --strict --verbose=2 "$app"
-          xcrun stapler validate "$app"
-          spctl --assess --type execute --verbose=4 "$app"
-
-          app_version="$("${app}/Contents/MacOS/Tamber Local Update Demo" --version)"
-          test "$app_version" = "$VERSION"
-          echo "Verified remote signed Demo App ${app_version} from ${manifest_url}"
+        run: node Scripts/ci/smoke-remote-artifact.mjs --mode demo
 
       - name: Smoke install AppHub from published internet artifacts
         if: inputs.publish_hub_update == 'true'
-        run: |
-          set -euo pipefail
-
-          smoke_root="$(mktemp -d)"
-          manifest_url="${RELEASE_BASE_URL}/hub-manifest.json"
-          manifest_json="${smoke_root}/hub-manifest.json"
-          apphub_zip="${smoke_root}/AppHub-${VERSION}.app.zip"
-
-          curl --fail --location --silent --show-error \
-            "$manifest_url" \
-            --output "$manifest_json"
-          apphub_url="$(node -e "
-            const manifest = require(process.argv[1]);
-            if (!manifest.artifact?.url) throw new Error('hub manifest missing artifact url');
-            console.log(manifest.artifact.url);
-          " "$manifest_json")"
-
-          curl --fail --location --silent --show-error \
-            "$apphub_url" \
-            --output "$apphub_zip"
-
-          ditto -x -k "$apphub_zip" "$smoke_root"
-          codesign --verify --strict --verbose=2 "${smoke_root}/AppHub.app"
-          xcrun stapler validate "${smoke_root}/AppHub.app"
-          spctl --assess --type execute --verbose=4 "${smoke_root}/AppHub.app"
-          codesign --verify --strict --verbose=2 \
-            "${smoke_root}/AppHub.app/Contents/Library/LaunchServices/com.tamber.AppHub.PrivilegedHelper"
-
-          /usr/bin/perl -e 'alarm shift; exec @ARGV' 60 \
-            sudo "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" bless-helper
-          codesign --verify --strict --verbose=2 \
-            /Library/PrivilegedHelperTools/com.tamber.AppHub.PrivilegedHelper
-
-          "${smoke_root}/AppHub.app/Contents/MacOS/AppHub" \
-            --root "${smoke_root}/hub-state" \
-            remote-install \
-            --manifest-url "$manifest_url"
-
-          installed="/Applications/AppHub.app/Contents/MacOS/AppHub"
-          test -x "$installed"
-          installed_version="$("$installed" --version)"
-          test "$installed_version" = "$VERSION"
-          codesign --verify --strict --verbose=2 /Applications/AppHub.app
-          xcrun stapler validate /Applications/AppHub.app
-          spctl --assess --type execute --verbose=4 /Applications/AppHub.app
-          echo "Installed remote signed AppHub ${installed_version} from ${manifest_url}"
+        run: node Scripts/ci/smoke-remote-artifact.mjs --mode hub

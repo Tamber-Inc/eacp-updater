@@ -1,0 +1,52 @@
+{
+  "storageRoot": "gs://tamber-artifacts/jamie-updater-demo",
+  "publicRoot": "https://storage.googleapis.com/tamber-artifacts/jamie-updater-demo",
+  "defaultChannel": "stable",
+  "macOSDeploymentTarget": "11.0",
+  "release": {
+    "repo": "Tamber-Inc/eacp-updater",
+    "tag": "remote-demo-v1",
+    "baseUrl": "https://github.com/Tamber-Inc/eacp-updater/releases/download/remote-demo-v1"
+  },
+  "hub": {
+    "productId": "com.tamber.AppHub",
+    "name": "AppHub",
+    "bundleName": "AppHub.app",
+    "binaryName": "AppHub",
+    "cmakeTarget": "AppHub",
+    "versionDefine": "EACP_APPHUB_VERSION",
+    "disableDevCatalogDefine": "EACP_APPHUB_DISABLE_DEV_CATALOG",
+    "manifestUrlDefine": "EACP_APPHUB_MANIFEST_URL",
+    "demoManifestUrlDefine": "EACP_APPHUB_DEMO_MANIFEST_URL",
+    "buildRelativePath": ["Demos", "AppHub", "AppHub.app"],
+    "helperRelativePath": [
+      "Contents",
+      "Library",
+      "LaunchServices",
+      "com.tamber.AppHub.PrivilegedHelper"
+    ],
+    "zipNameTemplate": "AppHub-{version}.app.zip",
+    "packageNameTemplate": "AppHub-{version}.pkg",
+    "manifestName": "hub-manifest.json",
+    "installerManifestName": "hub-installer.json",
+    "installedBundle": "/Applications/AppHub.app",
+    "installedExecutable": "/Applications/AppHub.app/Contents/MacOS/AppHub",
+    "privilegedHelperPath": "/Library/PrivilegedHelperTools/com.tamber.AppHub.PrivilegedHelper"
+  },
+  "demoApp": {
+    "productId": "com.tamber.RealUpdateDemo",
+    "name": "Tamber Local Update Demo",
+    "bundleName": "Tamber Local Update Demo.app",
+    "binaryName": "Tamber Local Update Demo",
+    "cmakeTarget": "RealUpdateDemo",
+    "versionDefine": "EACP_REAL_UPDATE_DEMO_VERSION",
+    "buildRelativePath": [
+      "Demos",
+      "RealUpdateDemo",
+      "Tamber Local Update Demo.app"
+    ],
+    "zipNameTemplate": "TamberLocalUpdateDemo-{version}.app.zip",
+    "manifestName": "manifest.json"
+  },
+  "products": {}
+}

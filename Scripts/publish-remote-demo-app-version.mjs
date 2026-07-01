@@ -13,6 +13,12 @@ import {
   writeJson,
 } from './lib/cli.mjs';
 import {
+  configuredRelease,
+  configuredVersion,
+  loadPublishConfig,
+  templateName,
+} from './lib/apphub-publish-config.mjs';
+import {
   ensureTamberSigningIdentity,
   notarizeAndStapleApps,
   signPath,
@@ -22,20 +28,26 @@ import {
   verifyMachODeploymentTargetAtMost,
 } from './lib/macos-signing.mjs';
 
-const version = env('VERSION', '2.0.0');
-const releaseTag = env('RELEASE_TAG', 'remote-demo-v1');
-const releaseBaseUrl = env(
-  'RELEASE_BASE_URL',
-  `https://github.com/Tamber-Inc/eacp-updater/releases/download/${releaseTag}`,
+const { options } = parseArgs(process.argv.slice(2));
+const config = loadPublishConfig(options.config);
+const app = requiredObject(config, 'demoApp');
+const version = configuredVersion();
+const release = configuredRelease(config);
+const outDir = envString('OUT_DIR', join(repoRoot, 'dist', 'remote-demo-app-update'));
+const buildDir = envString('BUILD_DIR', join(repoRoot, `build-remote-demo-app-update-${version}`));
+const macOSDeploymentTarget = envString(
+  'EACP_MACOS_DEPLOYMENT_TARGET',
+  requiredString(config, 'macOSDeploymentTarget', 'macOSDeploymentTarget'),
 );
-const outDir = env('OUT_DIR', join(repoRoot, 'dist', 'remote-demo-app-update'));
-const buildDir = env('BUILD_DIR', join(repoRoot, `build-remote-demo-app-update-${version}`));
-const macOSDeploymentTarget = env('EACP_MACOS_DEPLOYMENT_TARGET', '11.0');
 
-const demoAppName = 'Tamber Local Update Demo.app';
-const demoBinaryName = 'Tamber Local Update Demo';
-const demoZip = `TamberLocalUpdateDemo-${version}.app.zip`;
-const productId = 'com.tamber.RealUpdateDemo';
+const demoAppName = requiredString(app, 'bundleName', 'demoApp.bundleName');
+const demoBinaryName = requiredString(app, 'binaryName', 'demoApp.binaryName');
+const demoZip = templateName(requiredString(app, 'zipNameTemplate', 'demoApp.zipNameTemplate'), {
+  name: requiredString(app, 'name', 'demoApp.name'),
+  productId: requiredString(app, 'productId', 'demoApp.productId'),
+  version,
+});
+const manifestName = requiredString(app, 'manifestName', 'demoApp.manifestName');
 
 requireMacOS('Remote demo app update publishing');
 
@@ -50,13 +62,13 @@ run('cmake', [
   buildDir,
   '-DCMAKE_BUILD_TYPE=Release',
   `-DCMAKE_OSX_DEPLOYMENT_TARGET=${macOSDeploymentTarget}`,
-  `-DEACP_REAL_UPDATE_DEMO_VERSION=${version}`,
+  `-D${requiredString(app, 'versionDefine', 'demoApp.versionDefine')}=${version}`,
 ]);
 
 log(`Build Demo App ${version}`);
-run('cmake', ['--build', buildDir, '--target', 'RealUpdateDemo']);
+run('cmake', ['--build', buildDir, '--target', requiredString(app, 'cmakeTarget', 'demoApp.cmakeTarget')]);
 
-const demoApp = join(buildDir, 'Demos', 'RealUpdateDemo', demoAppName);
+const demoApp = join(buildDir, ...pathParts(app.buildRelativePath, 'demoApp.buildRelativePath'));
 
 log(`Sign Demo App ${version}`);
 signPath(demoApp);
@@ -86,28 +98,65 @@ verifyGatekeeperApp(packagedDemoApp);
 
 const demoSha = sha256File(join(outDir, demoZip));
 const manifest = {
-  productId,
-  name: 'Tamber Local Update Demo',
+  productId: requiredString(app, 'productId', 'demoApp.productId'),
+  name: requiredString(app, 'name', 'demoApp.name'),
   version,
   bundleName: demoAppName,
   artifact: {
-    url: `${releaseBaseUrl}/${demoZip}`,
+    url: `${release.baseUrl}/${demoZip}`,
     sha256: demoSha,
   },
 };
-writeJson(join(outDir, 'manifest.json'), manifest);
+writeJson(join(outDir, manifestName), manifest);
 
 log('Update release manifest and app artifact');
 run('gh', [
   'release',
   'upload',
-  releaseTag,
+  release.tag,
   join(outDir, demoZip),
-  join(outDir, 'manifest.json'),
+  join(outDir, manifestName),
   '--repo',
-  'Tamber-Inc/eacp-updater',
+  release.repo,
   '--clobber',
 ]);
 
 log(`Published Demo App ${version}`);
 console.log(JSON.stringify(manifest, null, 2));
+
+function parseArgs(args) {
+  const options = {};
+  for (let i = 0; i < args.length; ++i) {
+    if (args[i] === '--config') {
+      options.config = args[++i];
+    }
+  }
+  return { options };
+}
+
+function pathParts(value, label) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim()) return value.split('/');
+  throw new Error(`Publish config requires path: ${label}`);
+}
+
+function requiredObject(parent, key, label = key) {
+  const value = parent?.[key];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Publish config requires object: ${label}`);
+  }
+  return value;
+}
+
+function requiredString(parent, key, label = key) {
+  const value = parent?.[key];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`Publish config requires string: ${label}`);
+  }
+  return value.trim();
+}
+
+function envString(name, fallback) {
+  const value = env(name);
+  return value && value.trim() ? value : fallback;
+}

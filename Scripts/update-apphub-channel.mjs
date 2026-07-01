@@ -7,33 +7,47 @@ import { tmpdir } from 'node:os';
 import {
   capture,
   cleanDir,
-  env,
   log,
   readText,
   run,
   sha256File,
   writeJson,
 } from './lib/cli.mjs';
+import {
+  catalogUrl,
+  channelArtifactObject,
+  channelCatalogObject,
+  channelInstallerManifestObject,
+  configuredChannel,
+  configuredVersion,
+  emptyChannelIndex,
+  loadPublishConfig,
+  objectPublicUrl,
+  objectStorageUrl,
+  requireHubConfig,
+  templateName,
+  upsertChannel,
+} from './lib/apphub-publish-config.mjs';
 
-const [channelArg, versionArg] = process.argv.slice(2);
+const { positionals, options } = parseArgs(process.argv.slice(2));
+const [channelArg, versionArg] = positionals;
 
-const channel = normalizeChannel(channelArg ?? env('APPHUB_CHANNEL', env('CHANNEL', 'stable')));
-const version = versionArg ?? env('VERSION', '2.0.0');
-const storageRoot = stripTrailingSlash(
-  env('APPHUB_STORAGE_ROOT', 'gs://tamber-artifacts/jamie-updater-demo'),
-);
-const publicRoot = stripTrailingSlash(
-  env('APPHUB_PUBLIC_ROOT', 'https://storage.googleapis.com/tamber-artifacts/jamie-updater-demo'),
-);
-const outDir = env('OUT_DIR', join(mkdtempSync(join(tmpdir(), 'eacp-apphub-channel-')), 'metadata'));
-const channelPath = safeChannelPath(channel);
-const catalogObject = `channels/${channelPath}/apphub-catalog.json`;
-const installerManifestObject = `channels/${channelPath}/hub-installer.json`;
-const packageName = `AppHub-${version}.pkg`;
-const packageObject = `channels/${channelPath}/artifacts/${packageName}`;
-const packageStorageUrl = `${storageRoot}/${packageObject}`;
-const packagePublicUrl = `${publicRoot}/${packageObject}`;
-const catalogUrl = `${publicRoot}/${catalogObject}`;
+const config = loadPublishConfig(options.config);
+const hub = requireHubConfig(config);
+const channel = configuredChannel(config, channelArg);
+const version = configuredVersion(versionArg);
+const outDir = process.env.OUT_DIR ?? join(mkdtempSync(join(tmpdir(), 'eacp-apphub-channel-')), 'metadata');
+const catalogObject = channelCatalogObject(channel);
+const installerManifestObject = channelInstallerManifestObject(config, channel);
+const packageName = templateName(hub.packageNameTemplate, {
+  name: hub.name,
+  productId: hub.productId,
+  version,
+});
+const packageObject = channelArtifactObject(channel, packageName);
+const packageStorageUrl = objectStorageUrl(config, packageObject);
+const packagePublicUrl = objectPublicUrl(config, packageObject);
+const currentCatalogUrl = catalogUrl(config, channel);
 
 log(`Validate AppHub package artifact for ${channel} ${version}`);
 cleanDir(outDir);
@@ -55,10 +69,10 @@ writeJson(catalogPath, {
 writeJson(indexPath, channelIndex());
 
 writeJson(installerManifestPath, {
-  productId: 'com.tamber.AppHub',
-  name: 'AppHub',
+  productId: hub.productId,
+  name: hub.name,
   version,
-  bundleName: 'AppHub.app',
+  bundleName: hub.bundleName,
   package: {
     url: packagePublicUrl,
     sha256: packageSha256,
@@ -70,7 +84,7 @@ run('gcloud', [
   'storage',
   'cp',
   catalogPath,
-  `${storageRoot}/${catalogObject}`,
+  objectStorageUrl(config, catalogObject),
   '--content-type=application/json',
   '--cache-control=no-cache,max-age=0',
 ]);
@@ -78,7 +92,7 @@ run('gcloud', [
   'storage',
   'cp',
   indexPath,
-  `${storageRoot}/index.json`,
+  objectStorageUrl(config, 'index.json'),
   '--content-type=application/json',
   '--cache-control=no-cache,max-age=0',
 ]);
@@ -86,7 +100,7 @@ run('gcloud', [
   'storage',
   'cp',
   installerManifestPath,
-  `${storageRoot}/${installerManifestObject}`,
+  objectStorageUrl(config, installerManifestObject),
   '--content-type=application/json',
   '--cache-control=no-cache,max-age=0',
 ]);
@@ -95,9 +109,9 @@ log(`Published AppHub ${channel} channel`);
 console.log(JSON.stringify({
   channel,
   version,
-  indexUrl: `${publicRoot}/index.json`,
-  catalogUrl,
-  installerManifestUrl: `${publicRoot}/${installerManifestObject}`,
+  indexUrl: objectPublicUrl(config, 'index.json'),
+  catalogUrl: currentCatalogUrl,
+  installerManifestUrl: objectPublicUrl(config, installerManifestObject),
   package: {
     url: packagePublicUrl,
     sha256: packageSha256,
@@ -122,46 +136,27 @@ function downloadPackage(packagePath) {
 }
 
 function channelIndex() {
-  const fallback = { defaultChannel: channel, channels: [] };
+  const fallback = emptyChannelIndex(config, channel);
   const existingPath = join(outDir, 'existing-index.json');
   const existing = capture('gcloud', [
     'storage',
     'cp',
-    `${storageRoot}/index.json`,
+    objectStorageUrl(config, 'index.json'),
     existingPath,
   ], { check: false });
   const index = existing.status === 0 ? JSON.parse(readText(existingPath)) : fallback;
-  const channels = (index.channels ?? []).filter((entry) => entry.id !== channel);
-  channels.push({
-    id: channel,
-    name: titleForChannel(channel),
-    catalogUrl,
-    isDefault: (index.defaultChannel || channel) === channel,
-  });
-  index.defaultChannel = index.defaultChannel || channel;
-  index.channels = channels.sort((left, right) => left.id.localeCompare(right.id));
-  return index;
+  return upsertChannel(index, config, channel);
 }
 
-function normalizeChannel(value) {
-  const trimmed = String(value ?? '').trim();
-  return trimmed || 'stable';
-}
-
-function safeChannelPath(value) {
-  return normalizeChannel(value)
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'stable';
-}
-
-function stripTrailingSlash(value) {
-  return value.replace(/\/+$/, '');
-}
-
-function titleForChannel(value) {
-  return value
-    .split(/[/-]+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ') || value;
+function parseArgs(args) {
+  const positionals = [];
+  const options = {};
+  for (let i = 0; i < args.length; ++i) {
+    if (args[i] === '--config') {
+      options.config = args[++i];
+      continue;
+    }
+    positionals.push(args[i]);
+  }
+  return { positionals, options };
 }
