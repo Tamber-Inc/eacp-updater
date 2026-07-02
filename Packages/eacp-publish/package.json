@@ -1,6 +1,6 @@
 {
   "name": "@tamber-inc/eacp-publish",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Composable publisher for eacp-updater app suites: build, sign, notarize, and publish hub-managed apps from one config.",
   "type": "module",
   "bin": {
