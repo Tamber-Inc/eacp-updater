@@ -89,6 +89,15 @@ function(eacp_updater_add_app target)
             EACP_APP_NAME="${EACP_APP_NAME}"
             EACP_APP_VERSION="${EACP_APP_VERSION}")
 
+    # The channel's public base URL, for apps that fetch shared versioned
+    # resources (data blobs, models) alongside their own manifest:
+    #   <EACP_CHANNEL_BASE_URL>/shared/<file>
+    #   <EACP_CHANNEL_BASE_URL>/catalog.json
+    if (publicRoot)
+        target_compile_definitions(${target} PRIVATE
+                EACP_CHANNEL_BASE_URL="${publicRoot}/channels/${defaultChannel}")
+    endif ()
+
     if (EACP_APP_HUB)
         set(role "hub")
         if (publicRoot)

@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { mkdirSync, readdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 
 import { loadConfig, publishUnits, readTargetMetadata, findUpdaterTool } from '../config.mjs';
 import { createBackend } from '../hosting.mjs';
@@ -85,6 +85,27 @@ export async function release(args) {
     ok(`${app.zipName}  ${dim(app.sha256.slice(0, 12))}`);
   }
 
+  // Shared versioned data blobs — one file, published to the channel and
+  // recorded in the catalog as a Blob product, so every app can fetch the
+  // exact same versioned data from <channel>/shared/<file>.
+  const sharedData = Object.entries(config.sharedData ?? {}).map(([id, entry]) => {
+    const source = join(config.root, entry.file);
+    if (!existsSync(source)) fail(`sharedData '${id}': file not found: ${source}`);
+    const fileName = basename(entry.file);
+    const object = `channels/${channel}/shared/${fileName}`;
+    const stagedPath = join(tree, object);
+    mkdirSync(join(tree, `channels/${channel}/shared`), { recursive: true });
+    cpSync(source, stagedPath);
+    const sha = sha256File(stagedPath);
+    ok(`shared ${fileName}  ${dim(sha.slice(0, 12))}`);
+    return {
+      id,
+      name: entry.name ?? id,
+      url: `${config.hosting.publicRoot}/${object}`,
+      sha256: sha,
+    };
+  });
+
   step('Emit + validate channel metadata (eacp-updater-tool)');
   const backend = await createBackend(config);
   const existingIndex = await backend.fetchText('index.json');
@@ -97,22 +118,40 @@ export async function release(args) {
     defaultChannel: config.channels.default,
     publicRoot: config.hosting.publicRoot,
     existingIndexPath: existingIndex ? existingIndexPath : '',
-    products: apps.map((app) => ({
-      id: app.productId,
-      name: app.name,
-      bundleName: app.bundleName,
-      version,
-      kind: 'app',
-      role: app.role,
-      dependencies: [],
-      artifacts: [{
-        platform: 'macos',
-        architecture: 'universal',
-        url: app.url,
-        sha256: app.sha256,
-        signature: '',
-      }],
-    })),
+    products: [
+      ...apps.map((app) => ({
+        id: app.productId,
+        name: app.name,
+        bundleName: app.bundleName,
+        version,
+        kind: 'app',
+        role: app.role,
+        dependencies: [],
+        artifacts: [{
+          platform: 'macos',
+          architecture: 'universal',
+          url: app.url,
+          sha256: app.sha256,
+          signature: '',
+        }],
+      })),
+      ...sharedData.map((data) => ({
+        id: data.id,
+        name: data.name,
+        bundleName: '',
+        version,
+        kind: 'blob',
+        role: 'blob',
+        dependencies: [],
+        artifacts: [{
+          platform: 'any',
+          architecture: 'any',
+          url: data.url,
+          sha256: data.sha256,
+          signature: '',
+        }],
+      })),
+    ],
   };
   const specPath = join(outDir, 'spec.json');
   writeJson(specPath, spec);
@@ -134,7 +173,10 @@ export async function release(args) {
 
   const seconds = Math.round((Date.now() - started) / 1000);
   banner(`Released ${version} to '${channel}' in ${seconds}s 🚀`);
-  table(apps.map((app) => [app.productId, app.role, version, app.url]));
+  table([
+    ...apps.map((app) => [app.productId, app.role, version, app.url]),
+    ...sharedData.map((data) => [data.id, 'blob', version, data.url]),
+  ]);
   console.log(`\n  index    ${config.hosting.publicRoot}/index.json`);
   console.log(`  catalog  ${config.hosting.publicRoot}/channels/${channel}/catalog.json`);
 }
