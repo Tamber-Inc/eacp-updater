@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string_view>
 #include <system_error>
+#include <unistd.h>
 #include <vector>
 
 namespace eacp::Updater
