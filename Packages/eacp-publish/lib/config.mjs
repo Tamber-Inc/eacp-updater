@@ -55,10 +55,25 @@ export function publishUnits(config) {
 }
 
 // Metadata emitted by eacp_updater_add_app() at configure/build time.
+// Single-config generators write targets/<target>.json; multi-config
+// generators (Visual Studio, Xcode) write targets/<config>/<target>.json.
+// Releases build the Release configuration, so prefer that subdirectory.
 export function readTargetMetadata(buildDir, target) {
-  const path = join(buildDir, 'eacp-publish', 'targets', `${target}.json`);
-  if (!existsSync(path)) {
-    fail(`no publish metadata for target '${target}' (${path}).\n`
+  const targetsDir = join(buildDir, 'eacp-publish', 'targets');
+  const candidates = [join(targetsDir, `${target}.json`)];
+  try {
+    for (const entry of readdirSync(targetsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const path = join(targetsDir, entry.name, `${target}.json`);
+      if (entry.name === 'Release') candidates.splice(1, 0, path);
+      else candidates.push(path);
+    }
+  } catch {
+    // targetsDir itself missing — fall through to the failure message.
+  }
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (!path) {
+    fail(`no publish metadata for target '${target}' (${candidates[0]}).\n`
       + `  Is the app declared with eacp_updater_add_app() and built?`);
   }
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -78,7 +93,10 @@ export function findUpdaterTool(buildDir) {
     }
     for (const entry of entries) {
       const path = join(dir, entry.name);
-      if (entry.isFile() && entry.name === 'eacp-updater-tool') return resolve(path);
+      if (entry.isFile()
+        && (entry.name === 'eacp-updater-tool' || entry.name === 'eacp-updater-tool.exe')) {
+        return resolve(path);
+      }
       if (entry.isDirectory() && entry.name !== 'CMakeFiles' && !entry.name.startsWith('.')) {
         queue.push(path);
       }

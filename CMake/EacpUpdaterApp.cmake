@@ -139,8 +139,21 @@ function(eacp_updater_add_app target)
     else ()
         set(bundleDirGenex "$<TARGET_FILE_DIR:${target}>")
     endif ()
+    # Multi-config generators (Visual Studio, Xcode) evaluate file(GENERATE)
+    # once per configuration, and the target paths differ per config — one
+    # flat output file would be "written multiple times with different
+    # content". Emit per-config files there; the eacp-publish CLI checks the
+    # flat path first, then <config> subdirectories.
+    get_property(isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if (isMultiConfig)
+        set(targetMetadataPath
+                "${CMAKE_BINARY_DIR}/eacp-publish/targets/$<CONFIG>/${target}.json")
+    else ()
+        set(targetMetadataPath
+                "${CMAKE_BINARY_DIR}/eacp-publish/targets/${target}.json")
+    endif ()
     file(GENERATE
-            OUTPUT "${CMAKE_BINARY_DIR}/eacp-publish/targets/${target}.json"
+            OUTPUT "${targetMetadataPath}"
             CONTENT "{
   \"target\": \"${target}\",
   \"role\": \"${role}\",
