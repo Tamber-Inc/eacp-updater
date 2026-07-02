@@ -127,8 +127,13 @@ function(eacp_updater_add_app target)
                     "${EACP_APP_PRODUCT_ID}")
         set(bundleName "${EACP_APP_NAME}.app")
     else ()
+        # An app "bundle" off macOS is a directory named after the app with
+        # <name>.exe inside — the unit the publisher zips and the hub
+        # installs into its applications root.
         set_target_properties(${target} PROPERTIES
-                OUTPUT_NAME "${EACP_APP_NAME}")
+                OUTPUT_NAME "${EACP_APP_NAME}"
+                RUNTIME_OUTPUT_DIRECTORY
+                    "${CMAKE_BINARY_DIR}/eacp-publish/bundles/$<CONFIG>/${EACP_APP_NAME}")
         set(bundleName "${EACP_APP_NAME}")
     endif ()
 

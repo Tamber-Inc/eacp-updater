@@ -1,5 +1,6 @@
 #include "Updater.h"
 
+#include <eacp/Core/Platform/Platform.h>
 #include <eacp/Core/Utils/SHA256.h>
 
 #include <algorithm>
@@ -18,13 +19,6 @@
 #include <utility>
 #include <vector>
 
-#if !defined(_WIN32)
-#include <fcntl.h>
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
-extern char** environ;
-#endif
 
 namespace eacp::Updater
 {
@@ -192,88 +186,6 @@ InstallResult error(std::string message)
     result.ok = false;
     result.error = std::move(message);
     return result;
-}
-
-#if !defined(_WIN32)
-struct ProcessOutput
-{
-    bool ok = false;
-    std::string output;
-};
-
-ProcessOutput runProcessCapture(const std::vector<std::string>& args)
-{
-    auto result = ProcessOutput();
-    if (args.empty())
-        return result;
-
-    int pipeFds[2] = {-1, -1};
-    if (::pipe(pipeFds) != 0)
-        return result;
-
-    auto actions = posix_spawn_file_actions_t();
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, pipeFds[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&actions, pipeFds[1], STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&actions, pipeFds[0]);
-    posix_spawn_file_actions_addclose(&actions, pipeFds[1]);
-
-    auto argv = std::vector<char*>();
-    argv.reserve(args.size() + 1);
-    for (const auto& arg: args)
-        argv.push_back(const_cast<char*>(arg.c_str()));
-    argv.push_back(nullptr);
-
-    auto pid = pid_t {};
-    auto status = posix_spawnp(&pid,
-                               argv[0],
-                               &actions,
-                               nullptr,
-                               argv.data(),
-                               environ);
-    posix_spawn_file_actions_destroy(&actions);
-    ::close(pipeFds[1]);
-
-    if (status != 0)
-    {
-        ::close(pipeFds[0]);
-        return result;
-    }
-
-    auto buffer = std::array<char, 4096>();
-    while (true)
-    {
-        auto readCount = ::read(pipeFds[0], buffer.data(), buffer.size());
-        if (readCount <= 0)
-            break;
-        result.output.append(buffer.data(), static_cast<std::size_t>(readCount));
-    }
-    ::close(pipeFds[0]);
-
-    auto waitStatus = 0;
-    if (::waitpid(pid, &waitStatus, 0) < 0)
-        return result;
-
-    result.ok = WIFEXITED(waitStatus) && WEXITSTATUS(waitStatus) == 0;
-    return result;
-}
-
-bool runProcess(const std::vector<std::string>& args)
-{
-    return runProcessCapture(args).ok;
-}
-#endif
-
-std::string trimWhitespace(std::string value)
-{
-    while (!value.empty()
-           && std::isspace(static_cast<unsigned char>(value.back())))
-        value.pop_back();
-    auto first = std::size_t {};
-    while (first < value.size()
-           && std::isspace(static_cast<unsigned char>(value[first])))
-        ++first;
-    return value.substr(first);
 }
 
 bool hasDuplicateProductOperation(const InstallPlan& plan,
@@ -571,18 +483,8 @@ InstallResult executeInstall(const PreparedOperation& op)
     auto artifactPath = fs::path(op.request.artifactPath);
     if (artifactPath.extension() == ".zip")
     {
-#if defined(_WIN32)
-        return error("zip app artifact install is not implemented on Windows yet");
-#else
-        if (!runProcess({"/usr/bin/ditto",
-                         "-x",
-                         "-k",
-                         artifactPath.string(),
-                         op.installStagingDir.string()}))
-        {
+        if (!extractZipArchive(artifactPath, op.installStagingDir))
             return error("failed to unpack app artifact");
-        }
-#endif
     }
     else if (fs::is_directory(artifactPath, ec))
     {
@@ -736,11 +638,22 @@ bool isValidProductId(const std::string& productId)
 
 bool isValidAppBundleName(const std::string& bundleName)
 {
-    constexpr auto suffix = std::string_view(".app");
-    if (bundleName.size() <= suffix.size()
-        || bundleName.compare(bundleName.size() - suffix.size(),
-                              suffix.size(),
-                              suffix) != 0)
+    // ".app" is the macOS bundle convention; a Windows install is a plain
+    // directory named after the app.
+    if (eacp::Platform::isApple())
+    {
+        constexpr auto suffix = std::string_view(".app");
+        if (bundleName.size() <= suffix.size()
+            || bundleName.compare(bundleName.size() - suffix.size(),
+                                  suffix.size(),
+                                  suffix) != 0)
+            return false;
+    }
+
+    // Names made only of dots and spaces ("..", ". ") resolve to the
+    // applications root or its parent instead of an app directory.
+    if (bundleName.empty()
+        || bundleName.find_first_not_of(". ") == std::string::npos)
         return false;
 
     for (auto c: bundleName)
@@ -751,188 +664,6 @@ bool isValidAppBundleName(const std::string& bundleName)
     }
 
     return true;
-}
-
-#if !defined(_WIN32)
-namespace
-{
-fs::path createTemporaryDirectory(const std::string& prefix)
-{
-    auto pattern = (fs::temp_directory_path() / (prefix + ".XXXXXX")).string();
-    auto mutablePattern = std::vector<char>(pattern.begin(), pattern.end());
-    mutablePattern.push_back('\0');
-
-    auto* result = ::mkdtemp(mutablePattern.data());
-    return result == nullptr ? fs::path() : fs::path(result);
-}
-
-std::string bundleIdentifierFor(const fs::path& app)
-{
-    auto result =
-        runProcessCapture({"/usr/libexec/PlistBuddy",
-                           "-c",
-                           "Print :CFBundleIdentifier",
-                           (app / "Contents" / "Info.plist").string()});
-    return result.ok ? trimWhitespace(result.output) : std::string();
-}
-
-std::string teamIdentifierFor(const fs::path& app)
-{
-    auto result =
-        runProcessCapture({"/usr/bin/codesign",
-                           "--display",
-                           "--verbose=4",
-                           app.string()});
-    if (!result.ok)
-        return {};
-
-    auto input = std::istringstream(result.output);
-    auto line = std::string();
-    constexpr auto prefix = std::string_view("TeamIdentifier=");
-    while (std::getline(input, line))
-    {
-        if (line.rfind(prefix, 0) == 0)
-            return trimWhitespace(line.substr(prefix.size()));
-    }
-
-    return {};
-}
-
-InstallResult validateUnpackedAppBundle(
-    const PrivilegedAppBundleInstallRequest& request,
-    const fs::path& app)
-{
-    std::error_code ec;
-    if (!fs::is_directory(app, ec) || fs::is_symlink(app, ec))
-        return error("artifact did not contain expected app bundle");
-
-    auto actualBundleId = bundleIdentifierFor(app);
-    if (actualBundleId.empty())
-        return error("app bundle identifier could not be read");
-    if (actualBundleId != request.productId)
-        return error("app bundle identifier mismatch");
-
-    if (!runProcess({"/usr/bin/codesign",
-                     "--verify",
-                     "--strict",
-                     "--verbose=2",
-                     app.string()}))
-        return error("app bundle code signature verification failed");
-
-    if (!request.requiredTeamIdentifier.empty())
-    {
-        auto teamId = teamIdentifierFor(app);
-        if (teamId != request.requiredTeamIdentifier)
-            return error("app bundle team identifier mismatch");
-    }
-
-    return ok();
-}
-} // namespace
-#endif
-
-InstallResult installAppBundleArtifact(
-    const PrivilegedAppBundleInstallRequest& request)
-{
-#if defined(_WIN32)
-    (void) request;
-    return error("privileged app bundle installs are not implemented on Windows");
-#else
-    if (!isValidProductId(request.productId))
-        return error("invalid product id");
-    if (!isValidAppBundleName(request.bundleName))
-        return error("invalid app bundle name");
-    if (request.artifactPath.empty())
-        return error("artifact path is required");
-    if (request.artifactSha256.empty())
-        return error("artifact hash is required");
-
-    auto artifact = fs::path(request.artifactPath);
-    std::error_code ec;
-    if (!fs::is_regular_file(artifact, ec))
-        return error("artifact path is not a regular file");
-
-    auto actualHash = Crypto::sha256File(artifact.string());
-    if (actualHash.empty())
-        return error("artifact could not be read");
-    if (actualHash != request.artifactSha256)
-        return error("artifact hash mismatch");
-
-    auto temp = createTemporaryDirectory("eacp-privileged-install");
-    if (temp.empty())
-        return error("failed to create privileged install temp directory");
-
-    auto cleanup = [&]
-    {
-        std::error_code cleanupEc;
-        fs::remove_all(temp, cleanupEc);
-    };
-
-    auto unpack = temp / "unpack";
-    fs::create_directories(unpack, ec);
-    if (ec)
-    {
-        cleanup();
-        return error("failed to create unpack directory");
-    }
-
-    if (!runProcess({"/usr/bin/ditto",
-                     "-x",
-                     "-k",
-                     artifact.string(),
-                     unpack.string()}))
-    {
-        cleanup();
-        return error("failed to unpack artifact");
-    }
-
-    auto unpackedApp = unpack / request.bundleName;
-    if (auto validation = validateUnpackedAppBundle(request, unpackedApp);
-        !validation.ok)
-    {
-        cleanup();
-        return validation;
-    }
-
-    auto installPath = fs::path("/Applications") / request.bundleName;
-    auto rollbackPath =
-        fs::path("/Applications") / (request.bundleName + ".rollback");
-
-    fs::remove_all(rollbackPath, ec);
-    if (ec)
-    {
-        cleanup();
-        return error("failed to remove old rollback");
-    }
-
-    if (fs::exists(installPath, ec))
-    {
-        fs::rename(installPath, rollbackPath, ec);
-        if (ec)
-        {
-            cleanup();
-            return error("failed to create rollback");
-        }
-    }
-
-    fs::rename(unpackedApp, installPath, ec);
-    if (ec
-        && !runProcess({"/usr/bin/ditto",
-                        unpackedApp.string(),
-                        installPath.string()}))
-    {
-        auto restoreEc = std::error_code();
-        fs::remove_all(installPath, restoreEc);
-        restoreEc.clear();
-        if (fs::exists(rollbackPath, restoreEc))
-            fs::rename(rollbackPath, installPath, restoreEc);
-        cleanup();
-        return error("failed to install app");
-    }
-
-    cleanup();
-    return ok();
-#endif
 }
 
 ProductArtifact artifactForPlatform(const Product& product, Platform platform)

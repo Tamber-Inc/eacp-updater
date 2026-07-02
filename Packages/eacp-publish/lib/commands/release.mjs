@@ -3,9 +3,16 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 
 import { loadConfig, publishUnits, readTargetMetadata, findUpdaterTool } from '../config.mjs';
 import { createBackend } from '../hosting.mjs';
-import { cleanDir, run, sha256File, writeJson, writeText, capture } from '../exec.mjs';
+import { cleanDir, run, sha256File, writeJson, writeText, capture, zipDirectory } from '../exec.mjs';
 import { ensureSigningIdentity, notarizeAndStaple, signBundle } from '../sign-macos.mjs';
 import { banner, fail, info, ok, step, table, warn, dim } from '../ui.mjs';
+
+// The artifacts a release built on this machine produces. macOS builds ship
+// one universal bundle; elsewhere the artifact is host-arch specific.
+const hostPlatform =
+  { darwin: 'macos', win32: 'windows' }[process.platform] ?? 'linux';
+const hostArchitecture =
+  hostPlatform === 'macos' ? 'universal' : (process.arch === 'arm64' ? 'arm64' : 'x64');
 
 export async function release(args) {
   const started = Date.now();
@@ -36,7 +43,9 @@ export async function release(args) {
     ...(args.options['cmake-arg'] ? [].concat(args.options['cmake-arg']) : []),
   ];
   run('cmake', cmakeArgs, { quiet: true });
-  run('cmake', ['--build', buildDir, '--target',
+  // --config covers multi-config generators (Visual Studio); single-config
+  // generators take the type from CMAKE_BUILD_TYPE above and ignore it.
+  run('cmake', ['--build', buildDir, '--config', 'Release', '--target',
     ...units.map((unit) => unit.target), 'eacp-updater-tool', '-j'], { quiet: true });
   ok(`built ${units.map((unit) => unit.target).join(', ')} + eacp-updater-tool`);
 
@@ -55,19 +64,23 @@ export async function release(args) {
   });
   ok(`all ${apps.length} apps report --version ${version}`);
 
-  step('Sign');
-  ensureSigningIdentity();
-  for (const app of apps) {
-    signBundle(app.bundleDir);
-    ok(`${app.name} signed`);
-  }
+  if (process.platform === 'darwin') {
+    step('Sign');
+    ensureSigningIdentity();
+    for (const app of apps) {
+      signBundle(app.bundleDir);
+      ok(`${app.name} signed`);
+    }
 
-  if (notarize) {
-    step('Notarize + staple');
-    notarizeAndStaple(apps.map((app) => app.bundleDir));
-    ok('accepted by Apple notary service');
+    if (notarize) {
+      step('Notarize + staple');
+      notarizeAndStaple(apps.map((app) => app.bundleDir));
+      ok('accepted by Apple notary service');
+    } else {
+      warn('skipping notarization');
+    }
   } else {
-    warn('skipping notarization');
+    warn(`skipping signing + notarization — no ${hostPlatform} signing support yet`);
   }
 
   step('Package');
@@ -79,7 +92,7 @@ export async function release(args) {
     app.object = `channels/${channel}/artifacts/${app.zipName}`;
     const zipPath = join(tree, app.object);
     mkdirSync(join(tree, `channels/${channel}/artifacts`), { recursive: true });
-    run('ditto', ['-c', '-k', '--keepParent', app.bundleDir, zipPath], { quiet: true });
+    zipDirectory(app.bundleDir, zipPath);
     app.sha256 = sha256File(zipPath);
     app.url = `${config.hosting.publicRoot}/${app.object}`;
     ok(`${app.zipName}  ${dim(app.sha256.slice(0, 12))}`);
@@ -128,8 +141,8 @@ export async function release(args) {
         role: app.role,
         dependencies: [],
         artifacts: [{
-          platform: 'macos',
-          architecture: 'universal',
+          platform: hostPlatform,
+          architecture: hostArchitecture,
           url: app.url,
           sha256: app.sha256,
           signature: '',

@@ -4,6 +4,7 @@
 
 #include <Miro/Miro.h>
 
+#include <filesystem>
 #include <string>
 
 namespace eacp::Updater
@@ -324,6 +325,16 @@ int compareVersions(const std::string& lhs, const std::string& rhs);
 bool isNewerVersion(const std::string& candidate, const std::string& current);
 bool isValidProductId(const std::string& productId);
 bool isValidAppBundleName(const std::string& bundleName);
+
+// Portable zip primitives for app artifacts. macOS shells out to ditto
+// (preserves bundle metadata); Windows uses the bsdtar that ships in
+// System32. Both return false on unsupported platforms or tool failure.
+// createZipArchive zips <source> so the archive unpacks to
+// <source.filename()>/... (ditto --keepParent semantics).
+bool extractZipArchive(const std::filesystem::path& archive,
+                       const std::filesystem::path& destination);
+bool createZipArchive(const std::filesystem::path& source,
+                      const std::filesystem::path& archive);
 
 ProductArtifact artifactForPlatform(const Product& product, Platform platform);
 ProductArtifact artifactForTarget(const Product& product, const Target& target);

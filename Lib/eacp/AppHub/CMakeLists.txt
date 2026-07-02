@@ -19,7 +19,7 @@ elseif (WIN32)
             ../Updater/PrivilegedHelper/PrivilegedHelper-Unsupported.cpp)
 else ()
     target_sources(eacp-apphub PRIVATE
-            AppHubPlatform-Windows.cpp
+            AppHubPlatform-Unsupported.cpp
             ../Updater/PrivilegedHelper/PrivilegedHelper-Unsupported.cpp)
 endif ()
 
