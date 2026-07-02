@@ -29,6 +29,8 @@ option(EACP_BUILD_GRAPHICS "Build the Graphics, SVG and WebView modules" ON)
 option(EACP_BUILD_WEBVIEW "Build the WebView module" ON)
 option(EACP_UPDATER_ENABLE_TESTS "Enable Tests for eacp-updater" ${PROJECT_IS_TOP_LEVEL})
 option(EACP_UPDATER_BUILD_DEMOS "Build updater demo hub and product apps" ${PROJECT_IS_TOP_LEVEL})
+option(EACP_UPDATER_BUILD_TOOLS
+        "Build the eacp-updater-tool metadata emitter used by eacp-publish" ON)
 
 set(EACP_ENABLE_TESTS OFF CACHE BOOL "Do not build core eacp tests from CPM" FORCE)
 
@@ -48,6 +50,7 @@ endif ()
 
 include(TargetSetup)
 include(EacpSchema)
+include(EacpUpdaterApp)
 
 if (PROJECT_IS_TOP_LEVEL)
     eacp_default_setup()
@@ -66,6 +69,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_OBJCXX_STANDARD 20)
 
 add_subdirectory(Lib)
+
+if (EACP_UPDATER_BUILD_TOOLS)
+    add_subdirectory(Tools)
+endif ()
 
 if (EACP_UPDATER_BUILD_DEMOS)
     add_subdirectory(Demos)

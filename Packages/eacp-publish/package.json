@@ -1,0 +1,26 @@
+{
+  "name": "@tamber-inc/eacp-publish",
+  "version": "0.1.0",
+  "description": "Composable publisher for eacp-updater app suites: build, sign, notarize, and publish hub-managed apps from one config.",
+  "type": "module",
+  "bin": {
+    "eacp-publish": "bin/eacp-publish.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tamber-Inc/eacp-updater.git",
+    "directory": "Packages/eacp-publish"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "license": "UNLICENSED"
+}
